@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<index version="1" commit="bce7ba62ddaa4371ba04e5ad543571ee3b02269b">
+<index version="1" commit="bce7ba62ddaa4371ba04e5ad543571ee3b02269b" name="Backwash">
   <category name="Effects/vislov">
     <reapack name="Backwash.jsfx" type="effect" desc="Backwash (vislov)">
       <metadata>
