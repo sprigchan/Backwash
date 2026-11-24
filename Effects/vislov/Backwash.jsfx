@@ -1,0 +1,2128 @@
+desc:Backwash (vislov)
+tags:reverb reverse creative riser swell transition fx
+options:maxmem=24000000
+options:gmem=ReverseReverbSend
+
+// =====================================================================
+// BACKWASH - reverse reverb and effects for REAPER
+// Copyright (c) 2026 Ruslan Vislov. All rights reserved.
+// Website: vislovprod.com
+//
+// LICENSE
+// Free to use in personal and commercial audio projects. Sharing a link to
+// the official source or ReaPack repository is welcome, but please do not
+// repackage or redistribute the files yourself without written permission:
+//   - do not sell, rent, lease, or charge for Backwash or copies of it;
+//   - do not upload or include it (original or modified) in another pack;
+//   - do not remove or alter this notice or the author's name;
+//   - do not present it or parts of it as your own work.
+// Provided "as is", without warranty of any kind. Author is not liable for
+// any damage or loss arising from its use.
+// =====================================================================
+
+slider1:3<0,5,1{1/16 bar,1/8 bar,1/4 bar,1/2 bar,1 bar,2 bars}>-Length (Sync)
+slider2:1000<50,6000,1>-Length (ms)
+slider3:1<0,1,1{Time,Sync}>-Length Mode
+slider4:0<0,4,1{Plate,Hall,Room,Chamber,Cathedral}>-Reverb Type
+slider5:50<0,100,1>-Shape (%)
+slider6:100<0,200,1>-Width (%)
+slider7:0<-24,12,0.1>-Level (dB)
+slider8:20<20,2000,1>-High-pass (Hz)
+slider9:20000<500,20000,1>-Low-pass (Hz)
+slider10:0<0,1,1{Off,On}>-FX Pitch Riser
+slider11:0<0,1,1{Off,On}>-FX Saturation
+slider12:0<0,1,1{Off,On}>-FX Sweep
+slider13:1<0,1,1{Off,On}>-FX Modulation
+slider14:0<0,1,1{Off,On}>-FX Tremolo
+slider15:12<0,24,0.1>-Riser Pitch (st below)
+slider16:50<0,100,1>-Riser Curve (%)
+slider17:40<0,100,1>-Saturation Drive (%)
+slider18:100<0,100,1>-Saturation Mix (%)
+slider19:60<0,100,1>-Sweep Depth (%)
+slider20:30<0,100,1>-Sweep Resonance (%)
+slider21:0<0,2,1{Chorus,Flanger,Phaser}>-Modulation Mode
+slider22:50<0,100,1>-Modulation Amount (%)
+slider23:0.7<0.05,10,0.01>-Modulation Rate (Hz)
+slider24:50<0,100,1>-Tremolo Depth (%)
+slider25:5<0.5,30,0.1>-Tremolo Rate (Hz)
+slider26:0<0,1,1{Soft,Hard}>-Tremolo Mode
+slider28:0<0,1,1{Off,On}>-Loop
+slider29:1234567<0,7654321,1>-Effect Order
+slider30:250<10,2000,1>-Reverb Source Length (ms)
+slider31:0<0,1,1{Off,On}>-FX Auto Pan
+slider32:80<0,100,1>-Auto Pan Depth (%)
+slider33:1<0.05,20,0.01>-Auto Pan Rate (Hz)
+slider34:0<0,2,1{Sine,Triangle,Square}>-Auto Pan Shape
+slider35:0<0,1,1{Off,On}>-FX Bitcrusher
+slider36:50<0,100,1>-Bitcrusher Rate & Bits Reduction Amount (%)
+slider37:50<0,100,1>-Bitcrusher Rate/Bits Balance (%)
+slider38:100<0,100,1>-Bitcrusher Mix (%)
+slider39:0<0,3,1{Soft,Tube,Hard,Fuzz}>-Saturation Type
+slider40:0<0,100,1>-Sweep Noise (%)
+slider41:1000<20,20000,1>-Filter Bell Frequency (Hz)
+slider42:0<-30,15,0.1>-Filter Bell Gain (dB)
+slider43:1<0.1,10,0.01>-Filter Bell Q
+slider44:0<0,1,1{Show,Hide}>-Hide Hints
+
+in_pin:Left In
+in_pin:Right In
+out_pin:Left Out
+out_pin:Right Out
+options:no_meter
+// =====================================================================
+@init
+ext_noinit = 1;
+
+// ---------- memory map ----------
+maxlen = floor(min(srate,192000)*6);
+capL = 0;          capR = maxlen;
+wetL = 2*maxlen;   wetR = 3*maxlen;
+aL = 4*maxlen;     aR = 5*maxlen;
+bL = 6*maxlen;     bR = 7*maxlen;
+pL = 8*maxlen;     pR = 9*maxlen;
+dl = 10*maxlen;    STR = 16384;
+lenb = dl+24*STR;  posb = lenb+24; lpb = posb+24; fbb = lpb+24;
+tbl = fbb+24;      tpar = tbl+12;  NB = 448;
+capPk = tpar+16;   outPk = capPk+NB; npk = outPk+NB;
+MD = 16384;        mdl = npk+NB;
+NT = 1024;         tab = mdl+2*MD;
+phs = tab+NT+4;
+kt = phs+16;       kc = kt+160;
+sv = kc+120;       sb = sv+48;  sl = sb+48;
+ordt = sl+48;      go = ordt+8; gs = go+8; gtmp = gs+8; chn = gtmp+8;
+PRN = 4096;        prl = chn+12; prr = prl+PRN;   // pre-roll ring buffer for auto-start
+
+// ---------- state ----------
+st = 0; playing = 0; playable = 0; capLen = 0; rend_n = 0; rend_type = -1;
+rend_sA = -1; rend_in = -1; segS = 0; segE = 1;
+Tw = 1; wOff = 0; Tin = 0; srcN = 1; tinNow = 0; blkE = 0; bestE = 0; bestB = 0;
+recLevel = 0; capMax = 0; wMax = 0; drag = 0; lmd = 0; norm = 0; about_on = 0;
+capZoom = 1; capView = 0;
+Tn = 0; ppos = 0; trg = 1; sent_ui = 0;
+pvw = 0; pv_a = 0; pv_n = 0; pv_xf = 0; cmd_prev = 0; done_t = 0;
+arm = 0; prp = 0; prf = 0; trigThr = 0.001;  // auto-start threshold (about -60 dB)
+gmem[0] = 0;
+
+// ---------- reverb tables (Freeverb-style @44.1k) ----------
+tbl[0]=1116; tbl[1]=1188; tbl[2]=1277; tbl[3]=1356;
+tbl[4]=1422; tbl[5]=1491; tbl[6]=1557; tbl[7]=1617;
+tbl[8]=556;  tbl[9]=441;  tbl[10]=341; tbl[11]=225;
+tpar[0]=0.6;  tpar[1]=0.8;  tpar[2]=0.12;  // Plate
+tpar[3]=1.3;  tpar[4]=1.0;  tpar[5]=0.35;  // Hall
+tpar[6]=0.45; tpar[7]=0.5;  tpar[8]=0.45;  // Room
+tpar[9]=0.9;  tpar[10]=0.7; tpar[11]=0.25; // Chamber
+tpar[12]=1.9; tpar[13]=1.3; tpar[14]=0.4;  // Cathedral
+
+// ---------- knob table: cx, cy, r, slider, min, max, default, log ----------
+kt[0]=86; kt[1]=322; kt[2]=24; kt[3]=2; kt[4]=50; kt[5]=6000; kt[6]=1000; kt[7]=1;
+kt[8]=205; kt[9]=332; kt[10]=19; kt[11]=5; kt[12]=0; kt[13]=100; kt[14]=50; kt[15]=0;
+kt[16]=262; kt[17]=332; kt[18]=19; kt[19]=6; kt[20]=0; kt[21]=200; kt[22]=100; kt[23]=0;
+kt[24]=319; kt[25]=332; kt[26]=19; kt[27]=7; kt[28]=-24; kt[29]=12; kt[30]=0; kt[31]=0;
+// effect knobs (positions are set every frame): knobs 4-15 = two per card (effects 1-6), knobs 16-18 = Bitcrusher
+kt[32]=0; kt[33]=490; kt[34]=17; kt[35]=15; kt[36]=0; kt[37]=24; kt[38]=12; kt[39]=0;
+kt[40]=0; kt[41]=490; kt[42]=17; kt[43]=16; kt[44]=0; kt[45]=100; kt[46]=50; kt[47]=0;
+kt[48]=0; kt[49]=490; kt[50]=17; kt[51]=17; kt[52]=0; kt[53]=100; kt[54]=40; kt[55]=0;
+kt[56]=0; kt[57]=490; kt[58]=17; kt[59]=18; kt[60]=0; kt[61]=100; kt[62]=100; kt[63]=0;
+kt[64]=0; kt[65]=490; kt[66]=17; kt[67]=19; kt[68]=0; kt[69]=100; kt[70]=60; kt[71]=0;
+kt[72]=0; kt[73]=490; kt[74]=17; kt[75]=20; kt[76]=0; kt[77]=100; kt[78]=30; kt[79]=0;
+kt[80]=0; kt[81]=490; kt[82]=17; kt[83]=22; kt[84]=0; kt[85]=100; kt[86]=50; kt[87]=0;
+kt[88]=0; kt[89]=490; kt[90]=17; kt[91]=23; kt[92]=0.05; kt[93]=10; kt[94]=0.7; kt[95]=1;
+kt[96]=0; kt[97]=490; kt[98]=17; kt[99]=24; kt[100]=0; kt[101]=100; kt[102]=50; kt[103]=0;
+kt[104]=0; kt[105]=490; kt[106]=17; kt[107]=25; kt[108]=0.5; kt[109]=30; kt[110]=5; kt[111]=1;
+kt[112]=0; kt[113]=490; kt[114]=17; kt[115]=32; kt[116]=0; kt[117]=100; kt[118]=80; kt[119]=0;
+kt[120]=0; kt[121]=490; kt[122]=17; kt[123]=33; kt[124]=0.05; kt[125]=20; kt[126]=1; kt[127]=1;
+kt[128]=0; kt[129]=490; kt[130]=17; kt[131]=36; kt[132]=0; kt[133]=100; kt[134]=50; kt[135]=0;
+kt[136]=0; kt[137]=490; kt[138]=17; kt[139]=37; kt[140]=0; kt[141]=100; kt[142]=50; kt[143]=0;
+kt[144]=0; kt[145]=490; kt[146]=17; kt[147]=38; kt[148]=0; kt[149]=100; kt[150]=100; kt[151]=0;
+kt[152]=0; kt[153]=490; kt[154]=17; kt[155]=40; kt[156]=0; kt[157]=100; kt[158]=0; kt[159]=0;   // knob 19: sweep noise
+gpg = 0; gscr_t = 0;   // effect chain page (0..2 = cards 1-5, 2-6, 3-7)
+// Undo/redo history: 32 parameter snapshots.
+histBase = prr+PRN+64; histSlots = 32; histStride = 48; histCursor = 0; histCount = 0; histPending = 0; histReady = 0;
+
+// ---------- biquad filters ----------
+function bq_lp(f,sr) instance(b0,b1,b2,a1,a2) local(w,c,al,a0) (
+  w = 2*$pi*f/sr; c = cos(w); al = sin(w)/1.4142;
+  a0 = 1+al;
+  b0 = (1-c)*0.5/a0; b1 = (1-c)/a0; b2 = b0;
+  a1 = -2*c/a0; a2 = (1-al)/a0;
+);
+function bq_hp(f,sr) instance(b0,b1,b2,a1,a2) local(w,c,al,a0) (
+  w = 2*$pi*f/sr; c = cos(w); al = sin(w)/1.4142;
+  a0 = 1+al;
+  b0 = (1+c)*0.5/a0; b1 = -(1+c)/a0; b2 = b0;
+  a1 = -2*c/a0; a2 = (1-al)/a0;
+);
+function bq_pk(f,sr,gdb,q) instance(b0,b1,b2,a1,a2) local(w,c,al,A,a0) (
+  f = min(f,sr*0.45);
+  A = 10^(gdb/40); w = 2*$pi*f/sr; c = cos(w); al = sin(w)/(2*q);
+  a0 = 1+al/A;
+  b0 = (1+al*A)/a0; b1 = -2*c/a0; b2 = (1-al*A)/a0;
+  a1 = -2*c/a0; a2 = (1-al/A)/a0;
+);
+function bq_run(x) instance(b0,b1,b2,a1,a2,z1,z2) local(y) (
+  y = b0*x+z1;
+  z1 = b1*x-a1*y+z2;
+  z2 = b2*x-a2*y;
+  y;
+);
+
+// ---------- GUI helpers ----------
+function px(x) instance(S,OX) ( OX+x*S; );
+function py(y) instance(S,OY) ( OY+y*S; );
+// pixel-snapped rectangle: edges are rounded to whole pixels (same rule for every element),
+// so neighbouring shapes tile exactly and 1-unit lines never vanish at fractional scale
+function box(x,y,w,h) instance(S,OX,OY) local(x0,y0,x1,y1) (
+  x0 = floor(OX+x*S+0.5);     y0 = floor(OY+y*S+0.5);
+  x1 = floor(OX+(x+w)*S+0.5); y1 = floor(OY+(y+h)*S+0.5);
+  (x1 <= x0 && w >= 1) ? x1 = x0+1;   // lines / bars of at least 1 unit never vanish
+  (y1 <= y0 && h >= 1) ? y1 = y0+1;
+  (w > 0 && h > 0) ? gfx_rect(x0,y0,x1-x0,y1-y0);   // empty (0-size) shapes draw nothing
+);
+function ln(x1,y1,x2,y2) instance(S,OX,OY) ( gfx_line(OX+x1*S,OY+y1*S,OX+x2*S,OY+y2*S,1); );
+function dot(x,y,r,f) instance(S,OX,OY) ( gfx_circle(OX+x*S,OY+y*S,r*S,f,1); );
+function arc(x,y,r,a1,a2) instance(S,OX,OY) ( gfx_arc(OX+x*S,OY+y*S,r*S,a1,a2,1); );
+// thick smooth stroke: a row of overlapping anti-aliased round dots, drawn fully opaque
+// (opaque = no brighter spots where segments overlap; round dots = smooth joins and caps)
+function stroke(x1,y1,x2,y2,rad) instance(S,OX,OY) local(dx,dy,n,i,t) (
+  dx = x2-x1; dy = y2-y1;
+  n = max(1,ceil(sqrt(dx*dx+dy*dy)*S*1.5));
+  i = 0;
+  while (i <= n) (
+    t = i/n;
+    gfx_circle(OX+(x1+dx*t)*S,OY+(y1+dy*t)*S,rad*S,1,1);
+    i += 1;
+  );
+);
+// curved "undo" arrow centred near (cx,cy); m = 1 points left (undo), m = -1 points right (redo)
+function arrow(cx,cy,m) instance(S,OX,OY) local(r,i,n,a,x0,y0,x1,y1,w) (
+  r = 4.5; w = 0.15; n = 20;
+  this.stroke(cx-4.8*m,cy-r,cx,cy-r,w);                     // top tail
+  x0 = cx; y0 = cy-r; i = 1;
+  while (i <= n) (                                          // round bend on the far side
+    a = -$pi*0.5 + i/n*$pi;
+    x1 = cx+m*r*cos(a); y1 = cy+r*sin(a);
+    this.stroke(x0,y0,x1,y1,w);
+    x0 = x1; y0 = y1; i += 1;
+  );
+  this.stroke(cx,cy+r,cx-3.2*m,cy+r,w);                    // bottom tail
+  this.stroke(cx-4.8*m,cy-r,cx-1.7*m,cy-r-3,w);            // arrow head
+  this.stroke(cx-4.8*m,cy-r,cx-1.7*m,cy-r+3,w);
+);
+function tri(x1,y1,x2,y2,x3,y3) instance(S,OX,OY) (
+  gfx_triangle(OX+x1*S,OY+y1*S,OX+x2*S,OY+y2*S,OX+x3*S,OY+y3*S);
+);
+// slider that switches effect e on/off (effects 1-5 = sliders 10-14, 6 = Auto Pan = slider 31, 7 = Bitcrusher = slider 35)
+function fxs(e) ( e <= 5 ? 9+e : e == 6 ? 31 : 35; );
+
+// ---------- colour theme ----------
+// Hue of the theme colour #5200A3 is about 270 degrees. Every blue/cyan colour in the GUI is
+// moved to this hue (saturation and brightness are kept). Red / amber status colours stay as they are.
+// Change gHue (0-360) to re-colour the whole plugin.
+gHue = 270;
+function gset(r,g,b,a) global(gHue) local(mx,mn,d,h,s,v,hh,i,f,p,q,t,ro,go2,bo) (
+  mx = max(r,max(g,b)); mn = min(r,min(g,b)); d = mx-mn;
+  v = mx; s = mx > 0 ? d/mx : 0;
+  h = 0;
+  d > 0.0001 ? (
+    mx == r ? ( hh = (g-b)/d; hh < 0 ? hh += 6; ) :
+    mx == g ? ( hh = (b-r)/d+2; ) : ( hh = (r-g)/d+4; );
+    h = hh*60;
+  );
+  (d > 0.0001 && h >= 150 && h <= 260) ? (
+    h = gHue + (h-210)*0.3;
+    hh = h/60; i = floor(hh); f = hh-i;
+    p = v*(1-s); q = v*(1-s*f); t = v*(1-s*(1-f));
+    i == 0 ? ( ro = v; go2 = t; bo = p; ) :
+    i == 1 ? ( ro = q; go2 = v; bo = p; ) :
+    i == 2 ? ( ro = p; go2 = v; bo = t; ) :
+    i == 3 ? ( ro = p; go2 = q; bo = v; ) :
+    i == 4 ? ( ro = t; go2 = p; bo = v; ) : ( ro = v; go2 = p; bo = q; );
+    r = ro; g = go2; b = bo;
+  );
+  gfx_set(r,g,b,a);
+);
+
+function panel(x,y,w,h) instance(S,OX,OY) local(x0,y0,x1,y1,bw) (
+  x0 = floor(OX+x*S+0.5);     y0 = floor(OY+y*S+0.5);
+  x1 = floor(OX+(x+w)*S+0.5); y1 = floor(OY+(y+h)*S+0.5);
+  bw = max(1,floor(S));   // border thickness in whole pixels, never 0
+  gset(0.17,0.21,0.32,1);
+  gfx_rect(x0,y0,x1-x0,y1-y0);
+  gset(0.065,0.085,0.15,1);
+  gfx_rect(x0+bw,y0+bw,x1-x0-2*bw,y1-y0-2*bw);
+);
+function btn(x,y,w,h,on) instance(S,OX,OY) local(x0,y0,x1,y1,bw) (
+  x0 = floor(OX+x*S+0.5);     y0 = floor(OY+y*S+0.5);
+  x1 = floor(OX+(x+w)*S+0.5); y1 = floor(OY+(y+h)*S+0.5);
+  bw = max(1,floor(S));
+  gset(on ? 0.42 : 0.18, on ? 0.5 : 0.24, on ? 1 : 0.38, 1);
+  gfx_rect(x0,y0,x1-x0,y1-y0);
+  gset(on ? 0.16 : 0.095, on ? 0.2 : 0.125, on ? 0.46 : 0.2, 1);
+  gfx_rect(x0+bw,y0+bw,x1-x0-2*bw,y1-y0-2*bw);
+);
+
+// =====================================================================
+@block
+sb[1]=slider1;   sb[2]=slider2;   sb[3]=slider3;   sb[4]=slider4;   sb[5]=slider5;
+sb[6]=slider6;   sb[7]=slider7;   sb[8]=slider8;   sb[9]=slider9;   sb[10]=slider10;
+sb[11]=slider11; sb[12]=slider12; sb[13]=slider13; sb[14]=slider14; sb[15]=slider15;
+sb[16]=slider16; sb[17]=slider17; sb[18]=slider18; sb[19]=slider19; sb[20]=slider20;
+sb[21]=slider21; sb[22]=slider22; sb[23]=slider23; sb[24]=slider24; sb[25]=slider25;
+sb[26]=slider26; sb[28]=slider28; sb[29]=slider29; sb[30]=slider30;
+sb[31]=slider31; sb[32]=slider32; sb[33]=slider33; sb[34]=slider34;
+sb[35]=slider35; sb[36]=slider36; sb[37]=slider37; sb[38]=slider38; sb[39]=slider39;
+sb[40]=slider40; sb[41]=slider41; sb[42]=slider42; sb[43]=slider43;
+
+// any parameter that affects the baked FX chain changed?
+chg = 0;
+ii = 5;
+while (ii <= 26) ( (sb[ii] != sl[ii]) ? ( chg = 1; ); sl[ii] = sb[ii]; ii += 1; );
+(sb[29] != sl[29]) ? ( chg = 1; ); sl[29] = sb[29];
+ii = 31; while (ii <= 43) ( (sb[ii] != sl[ii]) ? ( chg = 1; ); sl[ii] = sb[ii]; ii += 1; );
+
+// ---------- capture commands ----------
+cmd_cap ? (
+  cmd_cap = 0;
+  st == 1 ? ( do_stop = 1; ) :
+  arm ? ( arm = 0; ) :
+  ( playing = 0; playable = 0; st = 0; recpos = 0; capLen = 0; recLevel = 0; arm = 1; prp = 0; prf = 0; capZoom = 1; capView = 0; );
+);
+do_stop ? (
+  do_stop = 0;
+  st == 1 ? (
+    capLen = recpos;
+    segS = 0; segE = 1;
+    capLen > 1024 ? ( st = 2; scan_j = 0; capMax = 0; memset(capPk,0,NB); ) : ( st = 0; capLen = 0; );
+  );
+);
+recLevel *= 0.85;
+
+// ---------- target length ----------
+tmp = tempo > 0 ? tempo : 120;
+tsn = ts_num > 0 ? ts_num : 4;
+tsd = ts_denom > 0 ? ts_denom : 4;
+bar_s = tsn*4/tsd*60/tmp*srate;
+lenT = sb[3] ? bar_s*2^(sb[1]-4) : sb[2]*0.001*srate;
+Tt = floor(max(0.02*srate, min(lenT, maxlen)));
+
+// selected segment
+selA = floor(segS*capLen); selB = floor(segE*capLen);
+selB = min(capLen, max(selB, selA+256));
+// the reverb is fed only with the first N ms counted from the START marker
+// (the END marker only limits it when the markers are closer than N ms)
+srcN = max(64, floor(sb[30]*0.001*srate));
+tinNow = min(srcN, selB-selA);
+
+// ---------- analyse captured audio ----------
+st == 2 ? (
+  n = min(65536, capLen-scan_j);
+  i = 0;
+  while (i < n) (
+    j = scan_j+i;
+    b = floor(j*NB/capLen);
+    v = max(abs(capL[j]), abs(capR[j]));
+    v > capPk[b] ? ( capPk[b] = v; );
+    i += 1;
+  );
+  scan_j += n;
+  scan_j >= capLen ? (
+    capMax = 0; ii = 0;
+    while (ii < NB) ( capPk[ii] > capMax ? ( capMax = capPk[ii]; ); ii += 1; );
+    // auto-trim: put the handles on the first / last audible bucket
+    capMax > 0.0001 ? (
+      thr = capMax*0.03;
+      f0 = 0; while (f0 < NB-1 && capPk[f0] < thr) ( f0 += 1; );
+      f1 = NB-1; while (f1 > f0 && capPk[f1] < thr) ( f1 -= 1; );
+      segS = f0/NB; segE = (f1+1)/NB;
+    );
+    start_render = 1;
+  );
+);
+
+// ---------- re-render reverb when length / type / segment changed ----------
+(st >= 3) && capLen > 0 && (Tt != rend_n || sb[4] != rend_type || selA != rend_sA || tinNow != rend_in) ? ( start_render = 1; );
+
+start_render ? (
+  start_render = 0;
+  rend_n = Tt; rend_type = sb[4]; rend_sA = selA; rend_in = tinNow; Tn = Tt;
+  rtp = rend_type*3; scx = tpar[rtp]; rtf = tpar[rtp+1]; dmp = tpar[rtp+2];
+  RT = max(0.05, Tn/srate*rtf);
+  i = 0;
+  while (i < 24) (
+    k = i < 16 ? (i < 8 ? i : i-8) : (i < 20 ? i-8 : i-12);
+    sp = ((i >= 8 && i < 16) || i >= 20) ? 23 : 0;
+    len = i < 16 ? (tbl[k]+sp)*scx : (tbl[k]+sp)*(0.5+0.5*scx);
+    len = floor(len*srate/44100);
+    len = max(8, min(len, STR-1));
+    lenb[i] = len; posb[i] = 0; lpb[i] = 0;
+    fbb[i] = i < 16 ? exp(-6.9078*len/(RT*srate)) : 0.5;
+    i += 1;
+  );
+  memset(dl,0,24*STR);
+  rj = 0; inPk = 0; wPk = 0; norm = 0;
+  blkE = 0; bestE = 0; bestB = 0; wOff = 0;
+  Tin = tinNow; in_off = selA;   // source = first N ms starting at the left handle
+  // render a little longer than the target length: the part before the reverb's
+  // loudest point is dropped, so the reversed result ends at full level (no fade-out)
+  Tw = min(maxlen, Tn+Tin+floor(0.1*srate));
+  st = 3; playing = 0; playable = 0;
+);
+
+Tn1 = max(1, Tn-1);
+
+// ---------- render reverb (chunked) ----------
+st == 3 ? (
+  n = min(4096, Tw-rj);
+  i = 0;
+  while (i < n) (
+    j = rj+i;
+    inL = 0; inR = 0;
+    j < Tin ? (
+      inL = capL[in_off+j]; inR = capR[in_off+j];
+      a = max(abs(inL),abs(inR));
+      a > inPk ? ( inPk = a; );
+    );
+    inM = (inL+inR)*0.025;
+    oL = 0; oR = 0;
+    c = 0;
+    while (c < 16) (
+      base = dl+c*STR; p = posb[c]; y = base[p];
+      lpb[c] = y*(1-dmp)+lpb[c]*dmp;
+      base[p] = inM+lpb[c]*fbb[c];
+      p += 1; p >= lenb[c] ? ( p = 0; );
+      posb[c] = p;
+      c < 8 ? ( oL += y; ) : ( oR += y; );
+      c += 1;
+    );
+    c = 16;
+    while (c < 24) (
+      base = dl+c*STR; p = posb[c]; bv = base[p];
+      x = c < 20 ? oL : oR;
+      y = bv-x;
+      base[p] = x+bv*0.5;
+      p += 1; p >= lenb[c] ? ( p = 0; );
+      posb[c] = p;
+      c < 20 ? ( oL = y; ) : ( oR = y; );
+      c += 1;
+    );
+    wetL[j] = oL; wetR[j] = oR;
+    a = max(abs(oL),abs(oR));
+    a > wPk ? ( wPk = a; );
+    blkE += oL*oL+oR*oR;
+    ((j & 255) == 255) ? (
+      blkE > bestE ? ( bestE = blkE; bestB = j-255; );
+      blkE = 0;
+    );
+    i += 1;
+  );
+  rj += n;
+  rj >= Tw ? (
+    // exact loudest sample inside the loudest block = where the reversed audio will end
+    pk_i = bestB; pk_v = 0; ii = 0;
+    while (ii < 256) (
+      v = max(abs(wetL[bestB+ii]),abs(wetR[bestB+ii]));
+      v > pk_v ? ( pk_v = v; pk_i = bestB+ii; );
+      ii += 1;
+    );
+    wOff = max(0, min(pk_i, Tw-Tn));
+    norm = wPk > 0.000000001 ? (inPk/wPk) : 0;   // reversed tail ends at the same peak level as the source (0 dB)
+    start_chain = 1;
+  );
+);
+
+// ---------- FX chain: restart when parameters change ----------
+(chg && (st == 4 || st == 5)) ? ( start_chain = 1; );
+
+start_chain ? (
+  start_chain = 0;
+  // order = 7 digits (effects 1-7). Old presets with 5 / 6 digits get the missing effects appended.
+  o = sb[29];
+  o < 1000000 ? ( o < 100000 ? ( o = o*10+6; ); o = o*10+7; );
+  ordt[0] = floor(o/1000000)%10; ordt[1] = floor(o/100000)%10; ordt[2] = floor(o/10000)%10;
+  ordt[3] = floor(o/1000)%10;    ordt[4] = floor(o/100)%10;    ordt[5] = floor(o/10)%10; ordt[6] = o%10;
+  mchk = 0; ii = 0;
+  while (ii < 7) ( mchk += 2^ordt[ii]; ii += 1; );
+  mchk != 254 ? ( ordt[0]=1; ordt[1]=2; ordt[2]=3; ordt[3]=4; ordt[4]=5; ordt[5]=6; ordt[6]=7; );
+  nc = 0; chn[nc] = 0; nc += 1;
+  ii = 0;
+  while (ii < 7) (
+    e = ordt[ii];
+    sb[fxs(e)] ? ( chn[nc] = e; nc += 1; );
+    ii += 1;
+  );
+  chn[nc] = 8; nc += 1;   // 8 = tone stage (always last)
+  curL = aL; curR = aR; othL = bL; othR = bR;
+  cs = 0; bj = 0; st = 4;
+);
+
+// ---------- FX chain: chunked processing ----------
+st == 4 ? (
+  sc = chn[cs];
+  CHB = 16384;
+
+  // ----- stage initialisation -----
+  bj == 0 ? (
+    sc == 1 ? (
+      lnA = sb[15]/12*0.693147; ee = 2^(sb[16]/100*3);
+      tab[0] = 0; rprev = exp(-lnA); kk = 1;
+      while (kk <= NT) (
+        u = kk/NT; r_ = exp(-lnA*(1-u^ee));
+        tab[kk] = tab[kk-1]+0.5*(rprev+r_)/NT;
+        rprev = r_; kk += 1;
+      );
+      tab[NT+1] = tab[NT]; Iend = tab[NT];
+    );
+    sc == 2 ? (
+      sd = 1+sb[17]*0.12; sn = (1+2*sd)/(2*sd); smix = sb[18]*0.01;
+      // distortion types: 0 soft, 1 tube, 2 hard clip, 3 fuzz
+      // (types 1-4 work relative to the source peak, so the drive does not depend on the recording level)
+      stype = min(3,max(0,floor(sb[39]+0.5)));
+      sdv = sb[17]*0.01; sref = max(inPk,0.000001);
+      sbias = 0; stb = 0; sik = (1+sdv*15)/sref; sout = sref;
+      stype == 1 ? ( sbias = 0.3;  stb = sbias/(1+sbias); sik = (1+sdv*15)/sref; sout = sref*0.8; );
+      stype == 2 ? ( sik = (1+sdv*15)/sref; sout = sref*0.8; );
+      stype == 3 ? ( sbias = 0.15; sik = (1+sdv*60)/sref; sout = sref*0.7; );
+      sdcm = (stype == 1 || stype == 3);   // asymmetric types get a DC blocker
+      dcc = 0.9995; dcxL = 0; dcxR = 0; dcyL = 0; dcyR = 0;
+    );
+    sc == 3 ? (
+      swd = sb[19]*0.01; swk = 1.4-sb[20]*0.0128;
+      ic1L = 0; ic2L = 0; ic1R = 0; ic2R = 0;
+      // white noise that follows the loudness of the (reversed) audio: quiet -> loud
+      sng = 1.5*(sb[40]*0.01)^2; snv = 0;
+      sna = 1-exp(-1/(0.004*srate)); snr = 1-exp(-1/(0.04*srate));
+    );
+    sc == 4 ? (
+      memset(mdl,0,2*MD); memset(phs,0,16); mw = 0;
+      mmode = sb[21]; mamt = sb[22]*0.01; mrate = sb[23];
+      mmode == 0 ? ( mdb = 0.012; mdd = mamt*0.005; mfb = 0; );
+      mmode == 1 ? ( mdb = 0.0035; mdd = mamt*0.003; mfb = 0.55; );
+      mpx = 1+mamt*3; mpfb = 0.3+0.4*mamt;
+      acl = 0; acr = 0;
+    );
+    sc == 5 ? (
+      trdep = sb[24]*0.01; trrate = sb[25]; trmode = sb[26];
+      trc = 1-exp(-1/(0.0008*srate)); trg = 1;
+    );
+    sc == 6 ? (
+      apd = sb[32]*0.01; aprate = sb[33]; apmode = sb[34];
+      apc = 1-exp(-1/(0.003*srate)); appos = 0;
+    );
+    sc == 7 ? (
+      // bitcrusher: Amount = total reduction, Balance = how it is shared between rate and bits
+      // (0% = bits only, 50% = both equally, 100% = rate only)
+      bca = sb[36]*0.01; bcb = sb[37]*0.01; bcm = sb[38]*0.01;
+      bcr = bca*min(1,2*bcb);              // sample-rate reduction amount 0..1
+      bcq = bca*min(1,2*(1-bcb));          // bit-depth reduction amount 0..1
+      bchold = 2^(bcr*6.3);                // hold length in samples: 1 .. ~79
+      bcbits = 24*(1.5/24)^bcq;            // bit depth: 24 .. 1.5 bits
+      bcdoq = bcq > 0.001;
+      bcnl = 2^(bcbits-1);
+      bcref = max(inPk,0.000001);          // full scale = source peak, so the crush is level independent
+      bck = bcnl/bcref; bcks = bcref/bcnl;
+      bcph = bchold-1; bchl = 0; bchr = 0;
+    );
+    sc == 8 ? (
+      she = 2^((sb[5]*0.02-1)*1.5);
+      twid = sb[6]*0.01; tlvl = 10^(sb[7]/20);   // Level knob (dB)
+      thp = sb[8] > 25; tlp = sb[9] < 19500; tbell = abs(sb[42]) > 0.05;
+      hpL.bq_hp(sb[8],srate); hpR.bq_hp(sb[8],srate);
+      lpL.bq_lp(sb[9],srate); lpR.bq_lp(sb[9],srate);
+      hpL.z1 = 0; hpL.z2 = 0; hpR.z1 = 0; hpR.z2 = 0;
+      lpL.z1 = 0; lpL.z2 = 0; lpR.z1 = 0; lpR.z2 = 0;
+      bellL.bq_pk(sb[41],srate,sb[42],sb[43]); bellR.bq_pk(sb[41],srate,sb[42],sb[43]);
+      bellL.z1 = 0; bellL.z2 = 0; bellR.z1 = 0; bellR.z2 = 0;
+      finn = 0.004*srate; foutn = 0.002*srate;
+      memset(npk,0,NB);
+    );
+  );
+
+  n = min(CHB, Tn-bj);
+
+  // ----- stage 0: reverse + normalise -----
+  sc == 0 ? (
+    i = 0;
+    while (i < n) (
+      j = bj+i;
+      curL[j] = wetL[wOff+Tn-1-j]*norm; curR[j] = wetR[wOff+Tn-1-j]*norm;
+      i += 1;
+    );
+  );
+
+  // ----- stage 1: pitch riser (time-warp, ends at original pitch) -----
+  sc == 1 ? (
+    i = 0;
+    while (i < n) (
+      j = bj+i; p = j/Tn1; tp = p*NT; kk = floor(tp); fr = tp-kk;
+      Ip = tab[kk]*(1-fr)+tab[kk+1]*fr;
+      q = (1-(Iend-Ip))*Tn1;
+      q < 0 ? ( othL[j] = 0; othR[j] = 0; ) : (
+        q > Tn1-0.001 ? ( q = Tn1-0.001; );
+        i0 = floor(q); fr = q-i0;
+        othL[j] = curL[i0]*(1-fr)+curL[i0+1]*fr;
+        othR[j] = curR[i0]*(1-fr)+curR[i0+1]*fr;
+      );
+      i += 1;
+    );
+  );
+
+  // ----- stage 2: saturation / distortion (type + drive + mix) -----
+  sc == 2 ? (
+    i = 0;
+    stype == 0 ? (
+      while (i < n) (
+        j = bj+i;
+        x = curL[j]; z = x*sd*2; y = z/(1+abs(z))*sn; curL[j] = x+(y-x)*smix;
+        x = curR[j]; z = x*sd*2; y = z/(1+abs(z))*sn; curR[j] = x+(y-x)*smix;
+        i += 1;
+      );
+    ) : (
+      while (i < n) (
+        j = bj+i;
+        // ---- left ----
+        x = curL[j]; u = x*sik+sbias;
+        stype == 1 ? ( y = u/(1+abs(u))-stb; ) :                       // tube: asymmetric soft clip
+        stype == 2 ? ( y = max(-1,min(1,u)); ) :                       // hard clip
+                     ( y = u > 0 ? 1-exp(-u) : -(1-exp(u))*0.75; );   // fuzz: asymmetric exponential clip
+        y *= sout;
+        sdcm ? ( dcyL = y-dcxL+dcc*dcyL; dcxL = y; y = dcyL; );
+        curL[j] = x+(y-x)*smix;
+        // ---- right ----
+        x = curR[j]; u = x*sik+sbias;
+        stype == 1 ? ( y = u/(1+abs(u))-stb; ) :
+        stype == 2 ? ( y = max(-1,min(1,u)); ) :
+                     ( y = u > 0 ? 1-exp(-u) : -(1-exp(u))*0.75; );
+        y *= sout;
+        sdcm ? ( dcyR = y-dcxR+dcc*dcyR; dcxR = y; y = dcyR; );
+        curR[j] = x+(y-x)*smix;
+        i += 1;
+      );
+    );
+  );
+
+  // ----- stage 3: sweep (depth + resonance + noise) -----
+  sc == 3 ? (
+    i = 0;
+    while (i < n) (
+      j = bj+i; p = j/Tn1;
+      ((j & 15) == 0) ? (
+        fc = min(18000*0.012^(swd*(1-p)), srate*0.45);
+        sg = tan($pi*fc/srate);
+        sa1 = 1/(1+sg*(sg+swk)); sa2 = sg*sa1; sa3 = sg*sa2;
+      );
+      sng > 0 ? (
+        snm = max(abs(curL[j]),abs(curR[j]));
+        snv += (snm-snv)*(snm > snv ? sna : snr);
+        snn = snv*sng;
+        xnl = (rand(2)-1)*snn; xnr = (rand(2)-1)*snn;
+      ) : ( xnl = 0; xnr = 0; );
+      x = curL[j]+xnl; v3 = x-ic2L; v1 = sa1*ic1L+sa2*v3; v2 = ic2L+sa2*ic1L+sa3*v3;
+      ic1L = 2*v1-ic1L; ic2L = 2*v2-ic2L; curL[j] = v2;
+      x = curR[j]+xnr; v3 = x-ic2R; v1 = sa1*ic1R+sa2*v3; v2 = ic2R+sa2*ic1R+sa3*v3;
+      ic1R = 2*v1-ic1R; ic2R = 2*v2-ic2R; curR[j] = v2;
+      i += 1;
+    );
+  );
+
+  // ----- stage 4: modulation (chorus / flanger / phaser) -----
+  sc == 4 ? (
+    i = 0;
+    while (i < n) (
+      j = bj+i;
+      lfo = 2*$pi*mrate*j/srate;
+      sLl = sin(lfo); sLr = sin(lfo+1.5708);
+      xl = curL[j]; xr = curR[j];
+      mmode < 2 ? (
+        dtl = max(1,min(MD-2,(mdb+mdd*sLl)*srate));
+        dtr = max(1,min(MD-2,(mdb+mdd*sLr)*srate));
+        rp = mw-dtl; rp < 0 ? ( rp += MD; );
+        i0 = floor(rp); fr = rp-i0; i1 = i0+1; i1 >= MD ? ( i1 -= MD; );
+        dyl = mdl[i0]*(1-fr)+mdl[i1]*fr;
+        rp = mw-dtr; rp < 0 ? ( rp += MD; );
+        i0 = floor(rp); fr = rp-i0; i1 = i0+1; i1 >= MD ? ( i1 -= MD; );
+        mb2 = mdl+MD;
+        dyr = mb2[i0]*(1-fr)+mb2[i1]*fr;
+        mdl[mw] = xl+mfb*dyl; mb2[mw] = xr+mfb*dyr;
+        mw += 1; mw >= MD ? ( mw = 0; );
+        curL[j] = (xl+dyl)*0.7; curR[j] = (xr+dyr)*0.7;
+      ) : (
+        ((j & 7) == 0) ? (
+          tl = tan($pi*min(300*2^(mpx*(0.5+0.5*sLl)),srate*0.45)/srate); acl = (tl-1)/(tl+1);
+          tr_ = tan($pi*min(300*2^(mpx*(0.5+0.5*sLr)),srate*0.45)/srate); acr = (tr_-1)/(tr_+1);
+        );
+        s = xl+phs[8]*mpfb;
+        yy = acl*s+phs[0]; phs[0] = s-acl*yy; s = yy;
+        yy = acl*s+phs[1]; phs[1] = s-acl*yy; s = yy;
+        yy = acl*s+phs[2]; phs[2] = s-acl*yy; s = yy;
+        yy = acl*s+phs[3]; phs[3] = s-acl*yy; s = yy;
+        phs[8] = s; curL[j] = (xl+s)*0.6;
+        s = xr+phs[9]*mpfb;
+        yy = acr*s+phs[4]; phs[4] = s-acr*yy; s = yy;
+        yy = acr*s+phs[5]; phs[5] = s-acr*yy; s = yy;
+        yy = acr*s+phs[6]; phs[6] = s-acr*yy; s = yy;
+        yy = acr*s+phs[7]; phs[7] = s-acr*yy; s = yy;
+        phs[9] = s; curR[j] = (xr+s)*0.6;
+      );
+      i += 1;
+    );
+  );
+
+  // ----- stage 5: tremolo (depth + rate, soft / hard) -----
+  sc == 5 ? (
+    i = 0;
+    while (i < n) (
+      j = bj+i; ph = 2*$pi*trrate*j/srate;
+      trmode == 0 ? (
+        trg = 1-trdep*0.5*(1-cos(ph));
+      ) : (
+        tgt = sin(ph) >= 0 ? 1 : 1-trdep;
+        trg += (tgt-trg)*trc;
+      );
+      curL[j] = curL[j]*trg; curR[j] = curR[j]*trg;
+      i += 1;
+    );
+  );
+
+  // ----- stage 6: auto pan (depth + rate, sine / triangle / square) -----
+  sc == 6 ? (
+    i = 0;
+    while (i < n) (
+      j = bj+i; ph = 2*$pi*aprate*j/srate;
+      apmode == 0 ? ( aplf = sin(ph); ) :
+      apmode == 1 ? ( aplf = 2/$pi*asin(sin(ph)); ) : (
+        aptg = sin(ph) >= 0 ? 1 : -1;
+        appos += (aptg-appos)*apc; aplf = appos;
+      );
+      // true pan: the opposite channel is moved over, so the whole stereo image travels
+      // (a plain balance on wide reverb sounds like tremolo)
+      appn = aplf*apd;
+      apa = abs(appn)*$pi*0.5;
+      apnorm = 1/sqrt(1+sin(apa));
+      xl = curL[j]; xr = curR[j];
+      appn >= 0 ? (
+        curL[j] = xl*cos(apa)*apnorm; curR[j] = (xr+xl*sin(apa))*apnorm;
+      ) : (
+        curR[j] = xr*cos(apa)*apnorm; curL[j] = (xl+xr*sin(apa))*apnorm;
+      );
+      i += 1;
+    );
+  );
+
+  // ----- stage 7: bitcrusher (rate + bits reduction, balance, mix) -----
+  sc == 7 ? (
+    i = 0;
+    while (i < n) (
+      j = bj+i;
+      bcph += 1;
+      bcph >= bchold ? (
+        bcph -= bchold;
+        xl = curL[j]; xr = curR[j];
+        bcdoq ? (
+          xl = floor(xl*bck+0.5)*bcks;
+          xr = floor(xr*bck+0.5)*bcks;
+        );
+        bchl = xl; bchr = xr;
+      );
+      bol = curL[j]; bor = curR[j];
+      curL[j] = bol+(bchl-bol)*bcm;
+      curR[j] = bor+(bchr-bor)*bcm;
+      i += 1;
+    );
+  );
+
+  // ----- stage 8: tone (shape, filter, width, level) -----
+  sc == 8 ? (
+    i = 0;
+    while (i < n) (
+      j = bj+i; p = j/Tn1;
+      g = (p^she)*min(1,j/finn)*min(1,(Tn1-j)/foutn);
+      xl = curL[j]*g; xr = curR[j]*g;
+      thp ? ( xl = hpL.bq_run(xl); xr = hpR.bq_run(xr); );
+      tlp ? ( xl = lpL.bq_run(xl); xr = lpR.bq_run(xr); );
+      tbell ? ( xl = bellL.bq_run(xl); xr = bellR.bq_run(xr); );
+      mm = (xl+xr)*0.5; ss = (xl-xr)*0.5*twid;
+      xl = (mm+ss)*tlvl; xr = (mm-ss)*tlvl;
+      curL[j] = xl; curR[j] = xr;
+      a = max(abs(xl),abs(xr)); b = floor(j*NB/Tn);
+      a > npk[b] ? ( npk[b] = a; );
+      i += 1;
+    );
+  );
+
+  bj += n;
+  bj >= Tn ? (
+    sc == 1 ? ( tp_ = curL; curL = othL; othL = tp_; tp_ = curR; curR = othR; othR = tp_; );
+    cs += 1; bj = 0;
+    cs >= nc ? (
+      memcpy(pL,curL,Tn); memcpy(pR,curR,Tn);
+      memcpy(outPk,npk,NB);
+      wMax = 0; ii = 0;
+      while (ii < NB) ( outPk[ii] > wMax ? ( wMax = outPk[ii]; ); ii += 1; );
+      playable = 1; st = 5;
+    );
+  );
+);
+
+// ---------- MIDI trigger + pass-through ----------
+while (midirecv(mo,m1,m2,m3)) (
+  ((m1 & $xF0) == $x90 && m3 > 0) ? ( cmd_trig = 1; );
+  midisend(mo,m1,m2,m3);
+);
+cmd_play ? (
+  cmd_play = 0;
+  (playing && playable) ? ( playing = 0; ) : ( cmd_trig = 1; );
+);
+cmd_trig ? (
+  cmd_trig = 0;
+  playable ? ( playing = 1; ppos = 0; pvw = 0; );
+);
+// click on the reverse panel: reversed reverb followed by the original from the left handle
+cmd_prev ? (
+  cmd_prev = 0;
+  playable ? (
+    pvw = 1; pv_a = selA; pv_n = selB-selA;
+    // 3 ms equal-power crossfade between the end of the reverse reverb and the start of the original
+    // (a hard join at full level clicks). Set to 0 for a hard join.
+    pv_xf = max(0,min(floor(0.040*srate),min(floor(Tn*0.5),floor(pv_n*0.5))));
+    playing = 1; ppos = 0;
+  );
+);
+
+// ---------- send to REAPER track (via gmem + Lua script) ----------
+cmd_send ? (
+  cmd_send = 0;
+  (playable && !exp_busy) ? ( exp_busy = 1; exp_j = 0; );
+);
+exp_busy ? (
+  n = min(65536, Tn-exp_j);
+  i = 0;
+  while (i < n) (
+    gmem[16+2*(exp_j+i)] = pL[exp_j+i];
+    gmem[17+2*(exp_j+i)] = pR[exp_j+i];
+    i += 1;
+  );
+  exp_j += n;
+  exp_j >= Tn ? ( gmem[1] = Tn; gmem[2] = srate; gmem[0] = 1; exp_busy = 0; );
+);
+
+// =====================================================================
+@sample
+st == 1 ? (
+  recpos < maxlen ? (
+    capL[recpos] = spl0; capR[recpos] = spl1; recpos += 1;
+    a = max(abs(spl0),abs(spl1));
+    a > recLevel ? ( recLevel = a; );
+  ) : ( do_stop = 1; );
+);
+
+// armed: wait for sound, keep a short pre-roll so the attack is not cut
+arm ? (
+  prl[prp] = spl0; prr[prp] = spl1;
+  prp += 1; prp >= PRN ? ( prp = 0; );
+  prf < PRN ? ( prf += 1; );
+  a = max(abs(spl0),abs(spl1));
+  a > trigThr ? (
+    tot = min(prf, min(PRN-1, floor(0.02*srate))+1);
+    ti = 0;
+    while (ti < tot) (
+      tix = prp-tot+ti; tix < 0 ? ( tix += PRN; );
+      capL[ti] = prl[tix]; capR[ti] = prr[tix];
+      ti += 1;
+    );
+    recpos = tot; recLevel = a; st = 1; arm = 0;
+  );
+);
+
+yl = 0; yr = 0;
+(playing && playable) ? (
+  // Preview mode overlaps the final 50 ms of reverse reverb with the
+  // beginning of the original selection using an equal-power crossfade.
+  (pvw && pv_xf > 0 && ppos >= Tn-pv_xf && ppos < Tn) ? (
+    xfpos = ppos-(Tn-pv_xf);
+    xfu = xfpos/max(1,pv_xf);
+    revg = cos(xfu*$pi*0.5);
+    dryg_xf = sin(xfu*$pi*0.5);
+    src = pv_a+xfpos;
+    yl = pL[ppos]*revg+capL[src]*dryg_xf;
+    yr = pR[ppos]*revg+capR[src]*dryg_xf;
+  ) : ppos < Tn ? (
+    yl = pL[ppos]; yr = pR[ppos];
+  ) : (
+    src = pv_a+pv_xf+ppos-Tn;
+    yl = capL[src]; yr = capR[src];
+  );
+  // 4 ms cosine fade-out at the very end of playback: removes the click when the reversed
+  // reverb (which ends at full level) or the original selection stops dead.
+  pbEnd = pvw ? Tn+pv_n-pv_xf : Tn;
+  pbFl = max(1,min(floor(0.004*srate),floor(pbEnd*0.5)));
+  ppos >= pbEnd-pbFl ? (
+    pbG = 0.5+0.5*cos(min(1,(ppos-(pbEnd-pbFl))/pbFl)*$pi);
+    yl *= pbG; yr *= pbG;
+  );
+  ppos += 1;
+  ppos >= pbEnd ? ( sb[28] ? ( ppos = 0; ) : ( playing = 0; ); );
+);
+spl0 += yl;
+spl1 += yr;
+
+// =====================================================================
+@gfx 1000 794
+gScale = min(gfx_w/760, gfx_h/604);
+gOX = (gfx_w-760*gScale)*0.5; gOY = (gfx_h-604*gScale)*0.5+8*gScale;
+ui.S = gScale; ui.OX = gOX; ui.OY = gOY;
+mx = (mouse_x-gOX)/gScale; my = (mouse_y-gOY)/gScale;
+gkey = gfx_getchar(); // refresh modifier bits in mouse_cap
+mdown = mouse_cap & 1; click = mdown && !lmd;
+about_on && click ? ( about_on = 0; click = 0; );   // About window: any click closes it (and is not passed on)
+
+sv[1]=slider1;   sv[2]=slider2;   sv[3]=slider3;   sv[4]=slider4;   sv[5]=slider5;
+sv[6]=slider6;   sv[7]=slider7;   sv[8]=slider8;   sv[9]=slider9;   sv[10]=slider10;
+sv[11]=slider11; sv[12]=slider12; sv[13]=slider13; sv[14]=slider14; sv[15]=slider15;
+sv[16]=slider16; sv[17]=slider17; sv[18]=slider18; sv[19]=slider19; sv[20]=slider20;
+sv[21]=slider21; sv[22]=slider22; sv[23]=slider23; sv[24]=slider24; sv[25]=slider25;
+sv[26]=slider26; sv[28]=slider28; sv[29]=slider29; sv[30]=slider30;
+sv[31]=slider31; sv[32]=slider32; sv[33]=slider33; sv[34]=slider34;
+sv[35]=slider35; sv[36]=slider36; sv[37]=slider37; sv[38]=slider38; sv[39]=slider39;
+sv[40]=slider40; sv[41]=slider41; sv[42]=slider42; sv[43]=slider43;
+
+// Initialize history with the factory/current state.
+!histReady ? (
+  histBase[1] = sv[1];
+  histBase[2] = sv[2];
+  histBase[3] = sv[3];
+  histBase[4] = sv[4];
+  histBase[5] = sv[5];
+  histBase[6] = sv[6];
+  histBase[7] = sv[7];
+  histBase[8] = sv[8];
+  histBase[9] = sv[9];
+  histBase[10] = sv[10];
+  histBase[11] = sv[11];
+  histBase[12] = sv[12];
+  histBase[13] = sv[13];
+  histBase[14] = sv[14];
+  histBase[15] = sv[15];
+  histBase[16] = sv[16];
+  histBase[17] = sv[17];
+  histBase[18] = sv[18];
+  histBase[19] = sv[19];
+  histBase[20] = sv[20];
+  histBase[21] = sv[21];
+  histBase[22] = sv[22];
+  histBase[23] = sv[23];
+  histBase[24] = sv[24];
+  histBase[25] = sv[25];
+  histBase[26] = sv[26];
+  histBase[28] = sv[28];
+  histBase[29] = sv[29];
+  histBase[30] = sv[30];
+  histBase[31] = sv[31];
+  histBase[32] = sv[32];
+  histBase[33] = sv[33];
+  histBase[34] = sv[34];
+  histBase[35] = sv[35];
+  histBase[36] = sv[36];
+  histBase[37] = sv[37];
+  histBase[38] = sv[38];
+  histBase[39] = sv[39];
+  histBase[40] = sv[40];
+  histBase[41] = sv[41];
+  histBase[42] = sv[42];
+  histBase[43] = sv[43];
+  histReady = 1;
+);
+
+
+// effect order -> slots
+go_o = sv[29]; go_o < 1000000 ? ( go_o < 100000 ? ( go_o = go_o*10+6; ); go_o = go_o*10+7; );
+go[0] = floor(go_o/1000000)%10; go[1] = floor(go_o/100000)%10; go[2] = floor(go_o/10000)%10;
+go[3] = floor(go_o/1000)%10;    go[4] = floor(go_o/100)%10;    go[5] = floor(go_o/10)%10; go[6] = go_o%10;
+gmc = 0; gq = 0;
+while (gq < 7) ( gmc += 2^go[gq]; gq += 1; );
+gmc != 254 ? ( go[0]=1; go[1]=2; go[2]=3; go[3]=4; go[4]=5; go[5]=6; go[6]=7; );
+gq = 0; while (gq < 7) ( gs[go[gq]] = gq; gq += 1; );
+
+// Capture waveform: wheel = zoom around pointer, Shift+wheel = smooth horizontal pan
+(mouse_wheel != 0 && capLen > 0 && mx >= 24 && mx <= 736 && my >= 54 && my <= 130) ? (
+  (mouse_cap & 8) ? (
+    capView = max(0,min(1-1/capZoom,capView-mouse_wheel*0.001/capZoom));
+  ) : (
+    capAnchor = capView+(mx-24)/(712*capZoom);
+    capZoom = mouse_wheel > 0 ? min(16,capZoom*1.2) : max(1,capZoom/1.2);
+    capView = max(0,min(1-1/capZoom,capAnchor-(mx-24)/(712*capZoom)));
+  );
+);
+// effect chain page: mouse wheel over the chain panel flips the page
+(mouse_wheel != 0 && my >= 410 && my <= 566) ? ( gpg = max(0,min(2,gpg+(mouse_wheel < 0 ? 1 : -1))); );
+// filter graph: mouse wheel = bell Q
+(mouse_wheel != 0 && mx >= 372 && mx <= 562 && my >= 290 && my <= 386) ? (
+  gbq = max(0.1,min(10,mouse_wheel > 0 ? slider43*1.12 : slider43/1.12));
+  slider43 = floor(gbq*100+0.5)/100;
+  sliderchange(slider43); slider_automate(slider43);
+);
+// audio source (ms): mouse wheel
+(mouse_wheel != 0 && mx >= 260 && mx <= 305 && my >= 39 && my <= 54) ? (
+  gstep = (mouse_cap & 8) ? 1 : ((mouse_cap & 4) ? 50 : 10);
+  slider30 = max(10, min(2000, slider30 + (mouse_wheel > 0 ? gstep : -gstep)));
+  sliderchange(slider30); slider_automate(slider30);
+);
+mouse_wheel = 0;
+
+// effect knob positions follow their cards
+gk = 4;
+while (gk < 20) (
+  // cards with three knobs: Sweep (knobs 8, 9, 19) and Bitcrusher (16, 17, 18)
+  gk == 19 ? ( ge = 3; gq = 2; gnk = 3; ) :
+  gk >= 16 ? ( ge = 7; gq = gk-16; gnk = 3; ) :
+             ( ge = floor((gk-4)/2)+1; gq = (gk-4)%2; gnk = ge == 3 ? 3 : 2; );
+  gxo = gnk == 3 ? 24+gq*44 : (gq == 0 ? 36 : 100);
+  gpp = gs[ge]-gpg;
+  kt[gk*8] = (gpp >= 0 && gpp <= 4) ? 22+gpp*145+gxo : -1000;
+  kt[gk*8+1] = 490;
+  gk += 1;
+);
+
+// effective knob data
+gk = 0;
+while (gk < 20) (
+  gidx = kt[gk*8+3]; gmn = kt[gk*8+4]; gmx = kt[gk*8+5]; gdf = kt[gk*8+6]; glg = kt[gk*8+7];
+  (gk == 0 && sv[3]) ? ( gidx = 1; gmn = 0; gmx = 5; gdf = 3; glg = 0; );
+  gv = sv[gidx];
+  gn = glg ? log(gv/gmn)/log(gmx/gmn) : (gv-gmn)/(gmx-gmn);
+  gn = max(0,min(1,gn));
+  kc[gk*6] = gidx; kc[gk*6+1] = gmn; kc[gk*6+2] = gmx; kc[gk*6+3] = glg;
+  kc[gk*6+4] = gn; kc[gk*6+5] = gdf;
+  gk += 1;
+);
+
+gHPx = 376+182*log(sv[8]/20)/6.9078;
+gLPx = 376+182*log(sv[9]/20)/6.9078;
+gBx = 376+182*log(sv[41]/20)/6.9078; gBy = 320-sv[42]*1.667;   // bell point
+
+// ---------------------------------------------------------------- input
+setidx = 0;
+click ? (
+  histPending = 1;
+  histBase[histSlots*histStride+1] = sv[1];
+  histBase[histSlots*histStride+2] = sv[2];
+  histBase[histSlots*histStride+3] = sv[3];
+  histBase[histSlots*histStride+4] = sv[4];
+  histBase[histSlots*histStride+5] = sv[5];
+  histBase[histSlots*histStride+6] = sv[6];
+  histBase[histSlots*histStride+7] = sv[7];
+  histBase[histSlots*histStride+8] = sv[8];
+  histBase[histSlots*histStride+9] = sv[9];
+  histBase[histSlots*histStride+10] = sv[10];
+  histBase[histSlots*histStride+11] = sv[11];
+  histBase[histSlots*histStride+12] = sv[12];
+  histBase[histSlots*histStride+13] = sv[13];
+  histBase[histSlots*histStride+14] = sv[14];
+  histBase[histSlots*histStride+15] = sv[15];
+  histBase[histSlots*histStride+16] = sv[16];
+  histBase[histSlots*histStride+17] = sv[17];
+  histBase[histSlots*histStride+18] = sv[18];
+  histBase[histSlots*histStride+19] = sv[19];
+  histBase[histSlots*histStride+20] = sv[20];
+  histBase[histSlots*histStride+21] = sv[21];
+  histBase[histSlots*histStride+22] = sv[22];
+  histBase[histSlots*histStride+23] = sv[23];
+  histBase[histSlots*histStride+24] = sv[24];
+  histBase[histSlots*histStride+25] = sv[25];
+  histBase[histSlots*histStride+26] = sv[26];
+  histBase[histSlots*histStride+28] = sv[28];
+  histBase[histSlots*histStride+29] = sv[29];
+  histBase[histSlots*histStride+30] = sv[30];
+  histBase[histSlots*histStride+31] = sv[31];
+  histBase[histSlots*histStride+32] = sv[32];
+  histBase[histSlots*histStride+33] = sv[33];
+  histBase[histSlots*histStride+34] = sv[34];
+  histBase[histSlots*histStride+35] = sv[35];
+  histBase[histSlots*histStride+36] = sv[36];
+  histBase[histSlots*histStride+37] = sv[37];
+  histBase[histSlots*histStride+38] = sv[38];
+  histBase[histSlots*histStride+39] = sv[39];
+  histBase[histSlots*histStride+40] = sv[40];
+  histBase[histSlots*histStride+41] = sv[41];
+  histBase[histSlots*histStride+42] = sv[42];
+  histBase[histSlots*histStride+43] = sv[43];
+  drag = 0;
+  // Undo / redo buttons under the status label.
+  (mx >= 664 && mx <= 688 && my >= 568 && my <= 592) ? (gUndoReq = 1; histPending = 0;);
+  (mx >= 692 && mx <= 716 && my >= 568 && my <= 592) ? (gRedoReq = 1; histPending = 0;);
+  // Click the BACKWASH title to restore all factory parameter values.
+  (mx >= 16 && mx <= 150 && my >= -2 && my <= 18) ? (gResetReq = 1;);
+  gk = 0;
+  while (click && gk < 20) (
+    gddx = mx-kt[gk*8]; gddy = my-kt[gk*8+1]; grr = kt[gk*8+2]+5;
+    (gddx*gddx+gddy*gddy < grr*grr) ? (
+      drag = 1+gk; dn0 = kc[gk*6+4]; dy0 = my;
+      (mouse_cap & 4) ? ( drag = 0; setidx = kc[gk*6]; newv = kc[gk*6+5]; );
+    );
+    gk += 1;
+  );
+  // reverb source length field (drag up / down, Shift = fine, Ctrl+click = reset)
+  (click && mx >= 260 && mx <= 305 && my >= 39 && my <= 54) ? (
+    drag = 34; dn0 = log(max(10,sv[30])/10)/log(200); dv0 = sv[30]; dy0 = my;
+    (mouse_cap & 4) ? ( drag = 0; setidx = 30; newv = 250; );
+  );
+  // Capture waveform: Ctrl+click = FIT; otherwise select/drag markers in zoomed coordinates
+  (click && st >= 2 && capLen > 0 && my >= 54 && my <= 130 && mx >= 24 && mx <= 736) ? (
+    (mouse_cap & 4) ? (
+      capZoom = 1; capView = 0; drag = 0;
+    ) : (
+      (st >= 3) ? (
+        gxs = 24+712*(segS-capView)*capZoom;
+        gxe = 24+712*(segE-capView)*capZoom;
+        gsrc = capView+(mx-24)/(712*capZoom);
+        (abs(mx-gxs) <= 7 || abs(mx-gxe) <= 7) ? (
+          drag = abs(mx-gxs) <= abs(mx-gxe) ? 31 : 32;
+        ) : gsrc < segS ? (
+          drag = 31;
+        ) : gsrc > segE ? (
+          drag = 32;
+        ) : (
+          drag = 33; gdx0 = mx; gsS0 = segS; gsE0 = segE; gmoved = 0;
+        );
+      );
+    );
+  );
+  // click on the reverse panel = preview (reverse + original)
+  (click && playable && mx >= 16 && mx <= 744 && my >= 144 && my <= 228) ? ( cmd_prev = 1; );
+  // buttons
+  (click && mx >= 16 && mx <= 96 && my >= 236 && my <= 262) ? ( cmd_play = 1; );
+  (click && mx >= 14 && mx <= 66 && my >= 16 && my <= 32) ? ( about_on = 1; );   // click on "by vislov" = About
+  (click && mx >= 720 && mx <= 744 && my >= 568 && my <= 592) ? ( slider44 = 1-slider44; sliderchange(slider44); slider_automate(slider44); );   // show / hide hints
+  (click && mx >= 102 && mx <= 182 && my >= 236 && my <= 262) ? ( setidx = 28; newv = 1-sv[28]; );
+  (click && mx >= 188 && mx <= 292 && my >= 236 && my <= 262) ? ( cmd_cap = 1; );
+  (click && mx >= 556 && mx <= 744 && my >= 236 && my <= 262) ? (
+    setidx = 4; newv = mx < 650 ? sv[4]-1 : sv[4]+1;
+    newv < 0 ? ( newv = 4; ); newv > 4 ? ( newv = 0; );
+  );
+  (click && my >= 376 && my <= 394 && mx >= 31 && mx <= 83) ? ( setidx = 3; newv = 1; );
+  (click && my >= 376 && my <= 394 && mx >= 89 && mx <= 141) ? ( setidx = 3; newv = 0; );
+  (click && mx >= 588 && mx <= 732 && my >= 325 && my <= 349) ? ( cmd_send = 1; sent_ui = playable ? 1 : 0; );
+  // filter graph
+  (click && mx >= 372 && mx <= 562 && my >= 290 && my <= 386) ? (
+    ((mx-gBx)*(mx-gBx)+(my-gBy)*(my-gBy) < 100) ? (
+      // bell point: drag = frequency / gain, Ctrl+click = reset gain and Q
+      (mouse_cap & 4) ? (
+        slider42 = 0; slider43 = 1;
+        sliderchange(slider42); slider_automate(slider42);
+        sliderchange(slider43); slider_automate(slider43);
+      ) : ( drag = 23; );
+    ) : (
+      // HP / LP points: Ctrl+click on the point = reset (HP 20 Hz, LP 20 kHz)
+      ((mouse_cap & 4) && ((mx-gHPx)*(mx-gHPx)+(my-320)*(my-320) < 100)) ? (
+        slider8 = 20; sliderchange(slider8); slider_automate(slider8);
+      ) : ((mouse_cap & 4) && ((mx-gLPx)*(mx-gLPx)+(my-320)*(my-320) < 100)) ? (
+        slider9 = 20000; sliderchange(slider9); slider_automate(slider9);
+      ) : (
+        drag = abs(mx-gHPx) <= abs(mx-gLPx) ? 21 : 22;
+      );
+    );
+  );
+  // effect chain page buttons
+  (click && my >= 413 && my <= 426 && mx >= 114 && mx <= 130) ? ( gpg = max(0,gpg-1); );
+  (click && my >= 413 && my <= 426 && mx >= 132 && mx <= 148) ? ( gpg = min(2,gpg+1); );
+  // effect cards
+  gsl = gpg;
+  while (click && gsl <= gpg+4) (
+    ge = go[gsl]; gx0 = 22+(gsl-gpg)*145;
+    (my >= 432 && my <= 454 && mx >= gx0 && mx <= gx0+136) ? (
+      (mx >= gx0+16 && mx <= gx0+34) ? ( setidx = fxs(ge); newv = 1-sv[fxs(ge)]; ) : ( drag = 40+ge; );
+    );
+    ((ge == 4 || ge == 6) && my >= 530 && my <= 548) ? (
+      gm = floor((mx-(gx0+5))/43);
+      (mx >= gx0+5 && gm >= 0 && gm <= 2 && mx <= gx0+5+gm*43+41) ? ( setidx = ge == 4 ? 21 : 34; newv = gm; );
+    );
+    (ge == 2 && my >= 530 && my <= 548 && mx >= gx0+5 && mx <= gx0+131) ? (
+      setidx = 39; newv = mx < gx0+68 ? sv[39]-1 : sv[39]+1;
+      newv < 0 ? ( newv = 3; ); newv > 3 ? ( newv = 0; );
+    );
+    (ge == 5 && my >= 530 && my <= 548) ? (
+      (mx >= gx0+5 && mx <= gx0+66) ? ( setidx = 26; newv = 0; );
+      (mx >= gx0+70 && mx <= gx0+131) ? ( setidx = 26; newv = 1; );
+    );
+    gsl += 1;
+  );
+);
+
+(mdown && drag >= 1 && drag <= 20) ? (
+  gk = drag-1;
+  gnn = dn0+(dy0-my)/((mouse_cap & 8) ? 800 : 180);
+  gnn = max(0,min(1,gnn));
+  gmn = kc[gk*6+1]; gmx = kc[gk*6+2];
+  gnv = kc[gk*6+3] ? gmn*(gmx/gmn)^gnn : gmn+gnn*(gmx-gmn);
+  kc[gk*6] == 1 ? ( gnv = floor(gnv+0.5); );
+  setidx = kc[gk*6]; newv = gnv;
+);
+(mdown && drag == 31) ? ( segS = max(0,min(segE-0.01,capView+(mx-24)/(712*capZoom))); );
+(mdown && drag == 32) ? ( segE = min(1,max(segS+0.01,capView+(mx-24)/(712*capZoom))); );
+(mdown && drag == 33) ? (
+  abs(mx-gdx0) > 3 ? ( gmoved = 1; );
+  gmoved ? (
+    gd = max(-gsS0, min(1-gsE0, (mx-gdx0)/(712*capZoom)));
+    segS = gsS0+gd; segE = gsE0+gd;
+  );
+);
+(mdown && drag == 34) ? (
+  gsh = (mouse_cap & 8) ? 1 : 0;
+  gsh ? (
+    !gsh_prev ? ( dy0 = my; gsh_acc = 0; );
+    gsh_acc += (dy0 - my) / 2;
+    dy0 = my;
+    gdelta_ms = 0;
+    gsh_acc >= 1 ? ( gdelta_ms = floor(gsh_acc); gsh_acc -= gdelta_ms; );
+    gsh_acc <= -1 ? ( gdelta_ms = ceil(gsh_acc); gsh_acc -= gdelta_ms; );
+    setidx = 30; newv = max(10, min(2000, sv[30] + gdelta_ms));
+  ) : (
+    gsh_prev ? ( dn0 = log(max(10,sv[30])/10)/log(200); dy0 = my; );
+    gnn = max(0,min(1,dn0+(dy0-my)/180));
+    setidx = 30; newv = floor(10*200^gnn+0.5);
+  );
+  gsh_prev = gsh;
+) : (
+  gsh_prev = 0;
+);
+(mdown && drag == 23) ? (
+  gbf = 20*1000^((mx-376)/182); gbf = floor(max(20,min(20000,gbf))+0.5);
+  gbg = max(-30,min(15,(320-my)/1.667)); abs(gbg) < 0.25 ? ( gbg = 0; ); gbg = floor(gbg*10+0.5)/10;
+  gbf != slider41 ? ( slider41 = gbf; sliderchange(slider41); slider_automate(slider41); );
+  gbg != slider42 ? ( slider42 = gbg; sliderchange(slider42); slider_automate(slider42); );
+);
+(mdown && drag == 21) ? (
+  gf = 20*1000^((mx-376)/182); gf = max(20,min(2000,gf)); gf < 28 ? ( gf = 20; );
+  setidx = 8; newv = gf;
+);
+(mdown && drag == 22) ? (
+  gf = 20*1000^((mx-376)/182); gf = max(500,min(20000,gf)); gf > 18000 ? ( gf = 20000; );
+  setidx = 9; newv = gf;
+);
+(mdown && drag >= 41 && drag <= 47) ? (
+  ge = drag-40;
+  // edge auto-scroll between the two pages while dragging a card
+  gnow = time_precise();
+  (gnow-gscr_t > 0.45) ? (
+    (mx > 730 && gpg < 2) ? ( gpg += 1; gscr_t = gnow; );
+    (mx < 28 && gpg > 0) ? ( gpg -= 1; gscr_t = gnow; );
+  );
+  gt2 = max(0,min(4,floor((mx-16)/145)))+gpg;
+  gcur = gs[ge];
+  gt2 != gcur ? (
+    gq = 0; while (gq < 7) ( gtmp[gq] = go[gq]; gq += 1; );
+    gcur < gt2 ? (
+      while (gcur < gt2) ( gtmp[gcur] = gtmp[gcur+1]; gcur += 1; );
+    ) : (
+      while (gcur > gt2) ( gtmp[gcur] = gtmp[gcur-1]; gcur -= 1; );
+    );
+    gtmp[gt2] = ge;
+    setidx = 29; newv = gtmp[0]*1000000+gtmp[1]*100000+gtmp[2]*10000+gtmp[3]*1000+gtmp[4]*100+gtmp[5]*10+gtmp[6];
+  );
+);
+// Execute history and reset commands.
+gResetReq ? (
+  slider1 = 3;
+  slider2 = 1000;
+  slider3 = 1;
+  slider4 = 0;
+  slider5 = 50;
+  slider6 = 100;
+  slider7 = 0;
+  slider8 = 20;
+  slider9 = 20000;
+  slider10 = 0;
+  slider11 = 0;
+  slider12 = 0;
+  slider13 = 1;
+  slider14 = 0;
+  slider15 = 12;
+  slider16 = 50;
+  slider17 = 40;
+  slider18 = 100;
+  slider19 = 60;
+  slider20 = 30;
+  slider21 = 0;
+  slider22 = 50;
+  slider23 = 0.7;
+  slider24 = 50;
+  slider25 = 5;
+  slider26 = 0;
+  slider28 = 0;
+  slider29 = 1234567;
+  slider30 = 250;
+  slider31 = 0;
+  slider32 = 80;
+  slider33 = 1;
+  slider34 = 0;
+  slider35 = 0;
+  slider36 = 50;
+  slider37 = 50;
+  slider38 = 100;
+  slider39 = 0;
+  slider40 = 0;
+  slider41 = 1000;
+  slider42 = 0;
+  slider43 = 1;
+  sliderchange(1073741823); slider_automate(1073741823);
+  sliderchange(slider31); slider_automate(slider31);
+  sliderchange(slider32); slider_automate(slider32);
+  sliderchange(slider33); slider_automate(slider33);
+  sliderchange(slider34); slider_automate(slider34);
+  sliderchange(slider35); slider_automate(slider35);
+  sliderchange(slider36); slider_automate(slider36);
+  sliderchange(slider37); slider_automate(slider37);
+  sliderchange(slider38); slider_automate(slider38);
+  sliderchange(slider39); slider_automate(slider39);
+  sliderchange(slider40); slider_automate(slider40);
+  sliderchange(slider41); slider_automate(slider41);
+  sliderchange(slider42); slider_automate(slider42);
+  sliderchange(slider43); slider_automate(slider43);
+
+  // Reset the captured audio as if the plug-in had just been loaded.
+  playing = 0; playable = 0; pvw = 0; ppos = 0;
+  st = 0; arm = 0; recpos = 0; capLen = 0; recLevel = 0;
+  capMax = 0; scan_j = 0; do_stop = 0;
+  prp = 0; prf = 0;
+  segS = 0; segE = 1; capZoom = 1; capView = 0;
+  rend_n = 0; rend_type = -1; rend_sA = -1; rend_in = -1;
+  exp_busy = 0; exp_j = 0;
+  memset(capL,0,maxlen); memset(capR,0,maxlen);
+  memset(pL,0,maxlen); memset(pR,0,maxlen);
+  memset(capPk,0,NB); memset(outPk,0,NB);
+
+  // A full reset starts a fresh Undo/Redo history at the factory state.
+  histCursor = 0; histCount = 0; histPending = 0; histReady = 1;
+  histBase[1] = slider1; histBase[2] = slider2; histBase[3] = slider3;
+  histBase[4] = slider4; histBase[5] = slider5; histBase[6] = slider6;
+  histBase[7] = slider7; histBase[8] = slider8; histBase[9] = slider9;
+  histBase[10] = slider10; histBase[11] = slider11; histBase[12] = slider12;
+  histBase[13] = slider13; histBase[14] = slider14; histBase[15] = slider15;
+  histBase[16] = slider16; histBase[17] = slider17; histBase[18] = slider18;
+  histBase[19] = slider19; histBase[20] = slider20; histBase[21] = slider21;
+  histBase[22] = slider22; histBase[23] = slider23; histBase[24] = slider24;
+  histBase[25] = slider25; histBase[26] = slider26; histBase[28] = slider28;
+  histBase[29] = slider29; histBase[30] = slider30; histBase[31] = slider31;
+  histBase[32] = slider32; histBase[33] = slider33; histBase[34] = slider34;
+  histBase[35] = slider35; histBase[36] = slider36; histBase[37] = slider37;
+  histBase[38] = slider38; histBase[39] = slider39; histBase[40] = slider40;
+  histBase[41] = slider41; histBase[42] = slider42; histBase[43] = slider43;
+  gResetReq = 0;
+);
+gUndoReq ? (
+  histCursor > 0 ? (
+    histCursor -= 1; gRestoreSlot = histCursor;
+    slider1 = histBase[gRestoreSlot*histStride+1];
+    slider2 = histBase[gRestoreSlot*histStride+2];
+    slider3 = histBase[gRestoreSlot*histStride+3];
+    slider4 = histBase[gRestoreSlot*histStride+4];
+    slider5 = histBase[gRestoreSlot*histStride+5];
+    slider6 = histBase[gRestoreSlot*histStride+6];
+    slider7 = histBase[gRestoreSlot*histStride+7];
+    slider8 = histBase[gRestoreSlot*histStride+8];
+    slider9 = histBase[gRestoreSlot*histStride+9];
+    slider10 = histBase[gRestoreSlot*histStride+10];
+    slider11 = histBase[gRestoreSlot*histStride+11];
+    slider12 = histBase[gRestoreSlot*histStride+12];
+    slider13 = histBase[gRestoreSlot*histStride+13];
+    slider14 = histBase[gRestoreSlot*histStride+14];
+    slider15 = histBase[gRestoreSlot*histStride+15];
+    slider16 = histBase[gRestoreSlot*histStride+16];
+    slider17 = histBase[gRestoreSlot*histStride+17];
+    slider18 = histBase[gRestoreSlot*histStride+18];
+    slider19 = histBase[gRestoreSlot*histStride+19];
+    slider20 = histBase[gRestoreSlot*histStride+20];
+    slider21 = histBase[gRestoreSlot*histStride+21];
+    slider22 = histBase[gRestoreSlot*histStride+22];
+    slider23 = histBase[gRestoreSlot*histStride+23];
+    slider24 = histBase[gRestoreSlot*histStride+24];
+    slider25 = histBase[gRestoreSlot*histStride+25];
+    slider26 = histBase[gRestoreSlot*histStride+26];
+    slider28 = histBase[gRestoreSlot*histStride+28];
+    slider29 = histBase[gRestoreSlot*histStride+29];
+    slider30 = histBase[gRestoreSlot*histStride+30];
+    slider31 = histBase[gRestoreSlot*histStride+31];
+    slider32 = histBase[gRestoreSlot*histStride+32];
+    slider33 = histBase[gRestoreSlot*histStride+33];
+    slider34 = histBase[gRestoreSlot*histStride+34];
+    slider35 = histBase[gRestoreSlot*histStride+35];
+    slider36 = histBase[gRestoreSlot*histStride+36];
+    slider37 = histBase[gRestoreSlot*histStride+37];
+    slider38 = histBase[gRestoreSlot*histStride+38];
+    slider39 = histBase[gRestoreSlot*histStride+39];
+    slider40 = histBase[gRestoreSlot*histStride+40];
+    slider41 = histBase[gRestoreSlot*histStride+41];
+    slider42 = histBase[gRestoreSlot*histStride+42];
+    slider43 = histBase[gRestoreSlot*histStride+43];
+    sliderchange(1073741823); slider_automate(1073741823);
+    sliderchange(slider31); slider_automate(slider31);
+    sliderchange(slider32); slider_automate(slider32);
+    sliderchange(slider33); slider_automate(slider33);
+    sliderchange(slider34); slider_automate(slider34);
+    sliderchange(slider35); slider_automate(slider35);
+    sliderchange(slider36); slider_automate(slider36);
+    sliderchange(slider37); slider_automate(slider37);
+    sliderchange(slider38); slider_automate(slider38);
+    sliderchange(slider39); slider_automate(slider39);
+    sliderchange(slider40); slider_automate(slider40);
+    sliderchange(slider41); slider_automate(slider41);
+    sliderchange(slider42); slider_automate(slider42);
+    sliderchange(slider43); slider_automate(slider43);
+  );
+  gUndoReq = 0;
+);
+gRedoReq ? (
+  histCursor < histCount ? (
+    histCursor += 1; gRestoreSlot = histCursor;
+    slider1 = histBase[gRestoreSlot*histStride+1];
+    slider2 = histBase[gRestoreSlot*histStride+2];
+    slider3 = histBase[gRestoreSlot*histStride+3];
+    slider4 = histBase[gRestoreSlot*histStride+4];
+    slider5 = histBase[gRestoreSlot*histStride+5];
+    slider6 = histBase[gRestoreSlot*histStride+6];
+    slider7 = histBase[gRestoreSlot*histStride+7];
+    slider8 = histBase[gRestoreSlot*histStride+8];
+    slider9 = histBase[gRestoreSlot*histStride+9];
+    slider10 = histBase[gRestoreSlot*histStride+10];
+    slider11 = histBase[gRestoreSlot*histStride+11];
+    slider12 = histBase[gRestoreSlot*histStride+12];
+    slider13 = histBase[gRestoreSlot*histStride+13];
+    slider14 = histBase[gRestoreSlot*histStride+14];
+    slider15 = histBase[gRestoreSlot*histStride+15];
+    slider16 = histBase[gRestoreSlot*histStride+16];
+    slider17 = histBase[gRestoreSlot*histStride+17];
+    slider18 = histBase[gRestoreSlot*histStride+18];
+    slider19 = histBase[gRestoreSlot*histStride+19];
+    slider20 = histBase[gRestoreSlot*histStride+20];
+    slider21 = histBase[gRestoreSlot*histStride+21];
+    slider22 = histBase[gRestoreSlot*histStride+22];
+    slider23 = histBase[gRestoreSlot*histStride+23];
+    slider24 = histBase[gRestoreSlot*histStride+24];
+    slider25 = histBase[gRestoreSlot*histStride+25];
+    slider26 = histBase[gRestoreSlot*histStride+26];
+    slider28 = histBase[gRestoreSlot*histStride+28];
+    slider29 = histBase[gRestoreSlot*histStride+29];
+    slider30 = histBase[gRestoreSlot*histStride+30];
+    slider31 = histBase[gRestoreSlot*histStride+31];
+    slider32 = histBase[gRestoreSlot*histStride+32];
+    slider33 = histBase[gRestoreSlot*histStride+33];
+    slider34 = histBase[gRestoreSlot*histStride+34];
+    slider35 = histBase[gRestoreSlot*histStride+35];
+    slider36 = histBase[gRestoreSlot*histStride+36];
+    slider37 = histBase[gRestoreSlot*histStride+37];
+    slider38 = histBase[gRestoreSlot*histStride+38];
+    slider39 = histBase[gRestoreSlot*histStride+39];
+    slider40 = histBase[gRestoreSlot*histStride+40];
+    slider41 = histBase[gRestoreSlot*histStride+41];
+    slider42 = histBase[gRestoreSlot*histStride+42];
+    slider43 = histBase[gRestoreSlot*histStride+43];
+    sliderchange(1073741823); slider_automate(1073741823);
+    sliderchange(slider31); slider_automate(slider31);
+    sliderchange(slider32); slider_automate(slider32);
+    sliderchange(slider33); slider_automate(slider33);
+    sliderchange(slider34); slider_automate(slider34);
+    sliderchange(slider35); slider_automate(slider35);
+    sliderchange(slider36); slider_automate(slider36);
+    sliderchange(slider37); slider_automate(slider37);
+    sliderchange(slider38); slider_automate(slider38);
+    sliderchange(slider39); slider_automate(slider39);
+    sliderchange(slider40); slider_automate(slider40);
+    sliderchange(slider41); slider_automate(slider41);
+    sliderchange(slider42); slider_automate(slider42);
+    sliderchange(slider43); slider_automate(slider43);
+  );
+  gRedoReq = 0;
+);
+!mdown ? (
+  // plain click between the markers (no drag) = it is left of the end marker -> sets the start
+  (drag == 33 && !gmoved) ? ( segS = max(0,min(segE-0.01,(gdx0-24)/712)); );
+  drag = 0;
+  histPending ? (
+    sv[1] = slider1;
+    sv[2] = slider2;
+    sv[3] = slider3;
+    sv[4] = slider4;
+    sv[5] = slider5;
+    sv[6] = slider6;
+    sv[7] = slider7;
+    sv[8] = slider8;
+    sv[9] = slider9;
+    sv[10] = slider10;
+    sv[11] = slider11;
+    sv[12] = slider12;
+    sv[13] = slider13;
+    sv[14] = slider14;
+    sv[15] = slider15;
+    sv[16] = slider16;
+    sv[17] = slider17;
+    sv[18] = slider18;
+    sv[19] = slider19;
+    sv[20] = slider20;
+    sv[21] = slider21;
+    sv[22] = slider22;
+    sv[23] = slider23;
+    sv[24] = slider24;
+    sv[25] = slider25;
+    sv[26] = slider26;
+    sv[28] = slider28;
+    sv[29] = slider29;
+    sv[30] = slider30;
+    sv[31] = slider31;
+    sv[32] = slider32;
+    sv[33] = slider33;
+    sv[34] = slider34;
+    sv[35] = slider35;
+    sv[36] = slider36;
+    sv[37] = slider37;
+    sv[38] = slider38;
+    sv[39] = slider39;
+    sv[40] = slider40;
+    sv[41] = slider41;
+    sv[42] = slider42;
+    sv[43] = slider43;
+    gChanged = 0;
+    (abs(sv[1]-(histBase[histSlots*histStride+1])) > 0.000001) ? gChanged = 1;
+    (abs(sv[2]-(histBase[histSlots*histStride+2])) > 0.000001) ? gChanged = 1;
+    (abs(sv[3]-(histBase[histSlots*histStride+3])) > 0.000001) ? gChanged = 1;
+    (abs(sv[4]-(histBase[histSlots*histStride+4])) > 0.000001) ? gChanged = 1;
+    (abs(sv[5]-(histBase[histSlots*histStride+5])) > 0.000001) ? gChanged = 1;
+    (abs(sv[6]-(histBase[histSlots*histStride+6])) > 0.000001) ? gChanged = 1;
+    (abs(sv[7]-(histBase[histSlots*histStride+7])) > 0.000001) ? gChanged = 1;
+    (abs(sv[8]-(histBase[histSlots*histStride+8])) > 0.000001) ? gChanged = 1;
+    (abs(sv[9]-(histBase[histSlots*histStride+9])) > 0.000001) ? gChanged = 1;
+    (abs(sv[10]-(histBase[histSlots*histStride+10])) > 0.000001) ? gChanged = 1;
+    (abs(sv[11]-(histBase[histSlots*histStride+11])) > 0.000001) ? gChanged = 1;
+    (abs(sv[12]-(histBase[histSlots*histStride+12])) > 0.000001) ? gChanged = 1;
+    (abs(sv[13]-(histBase[histSlots*histStride+13])) > 0.000001) ? gChanged = 1;
+    (abs(sv[14]-(histBase[histSlots*histStride+14])) > 0.000001) ? gChanged = 1;
+    (abs(sv[15]-(histBase[histSlots*histStride+15])) > 0.000001) ? gChanged = 1;
+    (abs(sv[16]-(histBase[histSlots*histStride+16])) > 0.000001) ? gChanged = 1;
+    (abs(sv[17]-(histBase[histSlots*histStride+17])) > 0.000001) ? gChanged = 1;
+    (abs(sv[18]-(histBase[histSlots*histStride+18])) > 0.000001) ? gChanged = 1;
+    (abs(sv[19]-(histBase[histSlots*histStride+19])) > 0.000001) ? gChanged = 1;
+    (abs(sv[20]-(histBase[histSlots*histStride+20])) > 0.000001) ? gChanged = 1;
+    (abs(sv[21]-(histBase[histSlots*histStride+21])) > 0.000001) ? gChanged = 1;
+    (abs(sv[22]-(histBase[histSlots*histStride+22])) > 0.000001) ? gChanged = 1;
+    (abs(sv[23]-(histBase[histSlots*histStride+23])) > 0.000001) ? gChanged = 1;
+    (abs(sv[24]-(histBase[histSlots*histStride+24])) > 0.000001) ? gChanged = 1;
+    (abs(sv[25]-(histBase[histSlots*histStride+25])) > 0.000001) ? gChanged = 1;
+    (abs(sv[26]-(histBase[histSlots*histStride+26])) > 0.000001) ? gChanged = 1;
+    (abs(sv[28]-(histBase[histSlots*histStride+28])) > 0.000001) ? gChanged = 1;
+    (abs(sv[29]-(histBase[histSlots*histStride+29])) > 0.000001) ? gChanged = 1;
+    (abs(sv[30]-(histBase[histSlots*histStride+30])) > 0.000001) ? gChanged = 1;
+    (abs(sv[31]-(histBase[histSlots*histStride+31])) > 0.000001) ? gChanged = 1;
+    (abs(sv[32]-(histBase[histSlots*histStride+32])) > 0.000001) ? gChanged = 1;
+    (abs(sv[33]-(histBase[histSlots*histStride+33])) > 0.000001) ? gChanged = 1;
+    (abs(sv[34]-(histBase[histSlots*histStride+34])) > 0.000001) ? gChanged = 1;
+    (abs(sv[35]-(histBase[histSlots*histStride+35])) > 0.000001) ? gChanged = 1;
+    (abs(sv[36]-(histBase[histSlots*histStride+36])) > 0.000001) ? gChanged = 1;
+    (abs(sv[37]-(histBase[histSlots*histStride+37])) > 0.000001) ? gChanged = 1;
+    (abs(sv[38]-(histBase[histSlots*histStride+38])) > 0.000001) ? gChanged = 1;
+    (abs(sv[39]-(histBase[histSlots*histStride+39])) > 0.000001) ? gChanged = 1;
+    (abs(sv[40]-(histBase[histSlots*histStride+40])) > 0.000001) ? gChanged = 1;
+    (abs(sv[41]-(histBase[histSlots*histStride+41])) > 0.000001) ? gChanged = 1;
+    (abs(sv[42]-(histBase[histSlots*histStride+42])) > 0.000001) ? gChanged = 1;
+    (abs(sv[43]-(histBase[histSlots*histStride+43])) > 0.000001) ? gChanged = 1;
+    gChanged ? (
+      histCursor = min(histSlots-1,histCursor+1);
+      histCount = histCursor;
+      histBase[histCursor*histStride+1] = sv[1];
+      histBase[histCursor*histStride+2] = sv[2];
+      histBase[histCursor*histStride+3] = sv[3];
+      histBase[histCursor*histStride+4] = sv[4];
+      histBase[histCursor*histStride+5] = sv[5];
+      histBase[histCursor*histStride+6] = sv[6];
+      histBase[histCursor*histStride+7] = sv[7];
+      histBase[histCursor*histStride+8] = sv[8];
+      histBase[histCursor*histStride+9] = sv[9];
+      histBase[histCursor*histStride+10] = sv[10];
+      histBase[histCursor*histStride+11] = sv[11];
+      histBase[histCursor*histStride+12] = sv[12];
+      histBase[histCursor*histStride+13] = sv[13];
+      histBase[histCursor*histStride+14] = sv[14];
+      histBase[histCursor*histStride+15] = sv[15];
+      histBase[histCursor*histStride+16] = sv[16];
+      histBase[histCursor*histStride+17] = sv[17];
+      histBase[histCursor*histStride+18] = sv[18];
+      histBase[histCursor*histStride+19] = sv[19];
+      histBase[histCursor*histStride+20] = sv[20];
+      histBase[histCursor*histStride+21] = sv[21];
+      histBase[histCursor*histStride+22] = sv[22];
+      histBase[histCursor*histStride+23] = sv[23];
+      histBase[histCursor*histStride+24] = sv[24];
+      histBase[histCursor*histStride+25] = sv[25];
+      histBase[histCursor*histStride+26] = sv[26];
+      histBase[histCursor*histStride+28] = sv[28];
+      histBase[histCursor*histStride+29] = sv[29];
+      histBase[histCursor*histStride+30] = sv[30];
+      histBase[histCursor*histStride+31] = sv[31];
+      histBase[histCursor*histStride+32] = sv[32];
+      histBase[histCursor*histStride+33] = sv[33];
+      histBase[histCursor*histStride+34] = sv[34];
+      histBase[histCursor*histStride+35] = sv[35];
+      histBase[histCursor*histStride+36] = sv[36];
+      histBase[histCursor*histStride+37] = sv[37];
+      histBase[histCursor*histStride+38] = sv[38];
+      histBase[histCursor*histStride+39] = sv[39];
+      histBase[histCursor*histStride+40] = sv[40];
+      histBase[histCursor*histStride+41] = sv[41];
+      histBase[histCursor*histStride+42] = sv[42];
+      histBase[histCursor*histStride+43] = sv[43];
+    );
+    histPending = 0;
+  );
+);
+
+setidx > 0 ? (
+  setidx==1 ? ( slider1=newv; );   setidx==2 ? ( slider2=newv; );   setidx==3 ? ( slider3=newv; );
+  setidx==4 ? ( slider4=newv; );   setidx==5 ? ( slider5=newv; );   setidx==6 ? ( slider6=newv; );
+  setidx==7 ? ( slider7=newv; );   setidx==8 ? ( slider8=newv; );   setidx==9 ? ( slider9=newv; );
+  setidx==10 ? ( slider10=newv; ); setidx==11 ? ( slider11=newv; ); setidx==12 ? ( slider12=newv; );
+  setidx==13 ? ( slider13=newv; ); setidx==14 ? ( slider14=newv; ); setidx==15 ? ( slider15=newv; );
+  setidx==16 ? ( slider16=newv; ); setidx==17 ? ( slider17=newv; ); setidx==18 ? ( slider18=newv; );
+  setidx==19 ? ( slider19=newv; ); setidx==20 ? ( slider20=newv; ); setidx==21 ? ( slider21=newv; );
+  setidx==22 ? ( slider22=newv; ); setidx==23 ? ( slider23=newv; ); setidx==24 ? ( slider24=newv; );
+  setidx==25 ? ( slider25=newv; ); setidx==26 ? ( slider26=newv; );
+  setidx==28 ? ( slider28=newv; ); setidx==29 ? ( slider29=newv; ); setidx==30 ? ( slider30=newv; );
+  setidx==31 ? ( slider31=newv; ); setidx==32 ? ( slider32=newv; );
+  setidx==33 ? ( slider33=newv; ); setidx==34 ? ( slider34=newv; );
+  setidx==35 ? ( slider35=newv; ); setidx==36 ? ( slider36=newv; );
+  setidx==37 ? ( slider37=newv; ); setidx==38 ? ( slider38=newv; );
+  setidx==39 ? ( slider39=newv; ); setidx==40 ? ( slider40=newv; );
+  setidx <= 30 ? (
+    gmask = 2^(setidx-1);
+    sliderchange(gmask);
+    slider_automate(gmask);
+  ) : setidx == 31 ? ( sliderchange(slider31); slider_automate(slider31); ) :
+      setidx == 32 ? ( sliderchange(slider32); slider_automate(slider32); ) :
+      setidx == 33 ? ( sliderchange(slider33); slider_automate(slider33); ) :
+      setidx == 34 ? ( sliderchange(slider34); slider_automate(slider34); ) :
+      setidx == 35 ? ( sliderchange(slider35); slider_automate(slider35); ) :
+      setidx == 36 ? ( sliderchange(slider36); slider_automate(slider36); ) :
+      setidx == 37 ? ( sliderchange(slider37); slider_automate(slider37); ) :
+      setidx == 38 ? ( sliderchange(slider38); slider_automate(slider38); ) :
+      setidx == 39 ? ( sliderchange(slider39); slider_automate(slider39); ) :
+                     ( sliderchange(slider40); slider_automate(slider40); );
+);
+lmd = mdown;
+
+// hover detection (for hints)
+ghov = -1;
+(mx >= 16 && mx <= 744 && my >= 144 && my <= 228) ? ( ghov = 108; );
+(mx >= 576 && mx <= 744 && my >= 270 && my <= 404) ? ( ghov = 109; );
+(mx >= 14 && mx <= 66 && my >= 16 && my <= 32) ? ( ghov = 110; );
+gk = 0;
+while (gk < 20) (
+  gddx = mx-kt[gk*8]; gddy = my-kt[gk*8+1]; grr = kt[gk*8+2]+5;
+  (gddx*gddx+gddy*gddy < grr*grr) ? ( ghov = gk; );
+  gk += 1;
+);
+(drag >= 1 && drag <= 20) ? ( ghov = drag-1; );
+(mx >= 16 && mx <= 744 && my >= 34 && my <= 138) ? ( ghov = 102; );
+(drag == 31 || drag == 32 || drag == 33) ? ( ghov = 102; );
+((mx >= 260 && mx <= 305 && my >= 39 && my <= 54) || drag == 34) ? ( ghov = 103; );
+((mx >= 372 && mx <= 562 && my >= 290 && my <= 386) || drag == 21 || drag == 22 || drag == 23) ? ( ghov = 106; );
+(mx >= 720 && mx <= 744 && my >= 568 && my <= 592) ? ( ghov = 107; );
+(my >= 530 && my <= 548 && mx >= 22) ? (
+  (mx >= 22+(gs[5]-gpg)*145 && mx <= 22+(gs[5]-gpg)*145+136) ? ( ghov = 100; );
+  (mx >= 22+(gs[4]-gpg)*145 && mx <= 22+(gs[4]-gpg)*145+136) ? ( ghov = 101; );
+  (mx >= 22+(gs[6]-gpg)*145 && mx <= 22+(gs[6]-gpg)*145+136) ? ( ghov = 104; );
+  (mx >= 22+(gs[2]-gpg)*145 && mx <= 22+(gs[2]-gpg)*145+136) ? ( ghov = 105; );
+);
+
+// ---------------------------------------------------------------- drawing
+gt = 0; gy = 0;
+while (gy < gfx_h) (
+  gt = gy/gfx_h;
+  gset(0.045+0.03*gt, 0.055+0.04*gt, 0.11+0.07*gt, 1);
+  gfx_rect(0,gy,gfx_w,5);
+  gy += 4;
+);
+
+gfx_setfont(1,"Arial",floor(13*gScale));
+gfx_setfont(2,"Arial",floor(11.5*gScale));
+gfx_setfont(3,"Arial",floor(19*gScale),'b');
+gfx_setfont(4,"Arial",floor(10*gScale));
+gfx_setfont(5,"Arial",floor(17*gScale));
+
+gl = floor(sv[1]+0.5);
+sv[3] ? (
+  gl == 0 ? strcpy(#ln,"1/16 BAR") : gl == 1 ? strcpy(#ln,"1/8 BAR") : gl == 2 ? strcpy(#ln,"1/4 BAR") :
+  gl == 3 ? strcpy(#ln,"1/2 BAR") : gl == 4 ? strcpy(#ln,"1 BAR") : strcpy(#ln,"2 BARS");
+) : sprintf(#ln,"%d ms",sv[2]);
+
+gtp = floor(sv[4]+0.5);
+gtp == 0 ? strcpy(#tn,"PLATE") : gtp == 1 ? strcpy(#tn,"HALL") : gtp == 2 ? strcpy(#tn,"ROOM") :
+gtp == 3 ? strcpy(#tn,"CHAMBER") : strcpy(#tn,"CATHEDRAL");
+
+// title + status
+gfx_setfont(3); gset(0.88,0.93,1,1);
+gfx_x = ui.px(16); gfx_y = ui.py(-1); gfx_drawstr("BACKWASH");
+gfx_setfont(2); gset(0.5,0.62,0.8,1);
+gfx_x = ui.px(17); gfx_y = ui.py(18); gfx_drawstr("by vislov");
+arm ? strcpy(#stt,"WAITING FOR SOUND...") :
+st == 0 ? strcpy(#stt,"NO CAPTURE") :
+st == 1 ? sprintf(#stt,"RECORDING  %.2f s",recpos/srate) :
+st == 2 ? strcpy(#stt,"ANALYZING...") :
+st == 3 ? sprintf(#stt,"RENDERING REVERB  %d%%",rj/Tw*100) :
+st == 4 ? sprintf(#stt,"APPLYING FX  %d%%",(cs+bj/Tn)/nc*100) :
+strcpy(#stt,"READY");
+gfx_setfont(2); gset(0.45,0.8,1,1);
+gfx_measurestr(#stt,gtw,gth);
+gfx_x = ui.px(744)-gtw; gfx_y = ui.py(7); gfx_drawstr(#stt);
+
+// Compact Undo / Redo controls, beside the ? button at bottom-right.
+gUndoHover = mx >= 664 && mx <= 688 && my >= 568 && my <= 592;
+gRedoHover = mx >= 692 && mx <= 716 && my >= 568 && my <= 592;
+gUndoHover ? gset(0.16,0.24,0.34,1) : gset(0.09,0.14,0.22,1);
+ui.ln(664,568,688,568); ui.ln(688,568,688,592);
+ui.ln(688,592,664,592); ui.ln(664,592,664,568);
+gRedoHover ? gset(0.16,0.24,0.34,1) : gset(0.09,0.14,0.22,1);
+ui.ln(692,568,716,568); ui.ln(716,568,716,592);
+ui.ln(716,592,692,592); ui.ln(692,592,692,568);
+
+// Arrows: same colour as the "?" button, fully opaque (no alpha = no bright dots).
+// An unavailable arrow uses a fixed dimmer opaque colour.
+histCursor > 0 ? gset(0.85,0.93,1,1) : gset(0.3,0.36,0.5,1);
+ui.arrow(676.4,581.2,1);
+histCursor < histCount ? gset(0.85,0.93,1,1) : gset(0.3,0.36,0.5,1);
+ui.arrow(703.6,581.2,-1);
+
+// ===== captured audio panel (with trim handles) =====
+ui.panel(16,34,728,104);
+gset(0.5,0.62,0.8,1);
+gfx_x = ui.px(24); gfx_y = ui.py(40); gfx_drawstr("CAPTURED AUDIO");
+gset(0.45,0.55,0.72,1);
+strcpy(#t,"AUDIO SOURCE"); gfx_measurestr(#t,gtw,gth);
+gfx_x = ui.px(248)-gtw; gfx_y = ui.py(40); gfx_drawstr(#t);   // right edge fixed, same gap to the field as before
+ui.btn(260,38,45,15,drag == 34);
+gset(0.4,0.82,1,1);
+sprintf(#t,"%d ms",sv[30]);
+gfx_measurestr(#t,gtw,gth);
+gfx_x = ui.px(283)-gtw*0.5; gfx_y = ui.py(40); gfx_drawstr(#t);
+gset(0.5,0.62,0.8,1);
+st == 1 ? sprintf(#t,"%.2f s",recpos/srate) :
+(capLen > 0) ? sprintf(#t,"%.2f s   |   SELECTION %.2f s",capLen/srate,(segE-segS)*capLen/srate) : strcpy(#t,"0.00 s");
+gfx_measurestr(#t,gtw,gth);
+gfx_x = ui.px(736)-gtw; gfx_y = ui.py(40); gfx_drawstr(#t);  
+gcw = 712/224;
+arm ? (
+  gset(1,0.78,0.3,1); ui.dot(34,92,5,1);
+  gset(0.9,0.85,0.7,1); gfx_setfont(1);
+  gfx_x = ui.px(46); gfx_y = ui.py(86); gfx_drawstr("WAITING FOR SOUND... recording starts automatically");
+  gfx_setfont(2);
+) : st == 1 ? (
+  gset(1,0.3,0.3,1); ui.dot(34,92,5,1);
+  gset(0.9,0.7,0.7,1); gfx_setfont(1);
+  gfx_x = ui.px(46); gfx_y = ui.py(86); gfx_drawstr("RECORDING...");
+  gset(0.3,0.75,1,0.9); ui.box(160,89,min(1,recLevel)*560,6);
+  gfx_setfont(2);
+) : (st >= 2 && capLen > 0) ? (
+
+  gc = 0;
+  while (gc < 224) (
+    gsrcbin = (capView+gc/(224*capZoom))*224;
+    gbi = min(223,max(0,floor(gsrcbin)));
+    gpk = max(capPk[gbi*2],capPk[gbi*2+1]);
+    gh = capMax > 0.0001 ? gpk/capMax*23 : 0.6; gh = max(gh,0.6);
+    gset(0.32,0.72,0.95,0.9);
+    ui.box(24+gc*gcw,92-gh,gcw*0.7,gh*2);
+    gc += 1;
+  );
+  capMax <= 0.0001 ? (
+    gset(1,0.4,0.4,1); gfx_setfont(1);
+    strcpy(#p,"INPUT WAS SILENT - nothing was captured");
+    gfx_measurestr(#p,gtw,gth);
+    gfx_x = ui.px(380)-gtw*0.5; gfx_y = ui.py(86); gfx_drawstr(#p);
+    gfx_setfont(2);
+  );
+  gxs = 24+712*(segS-capView)*capZoom; gxe = 24+712*(segE-capView)*capZoom;
+  gset(0.02,0.03,0.07,0.65);
+  (gxs > 24) ? ui.box(24,58,min(712,gxs-24),68);
+  (gxe < 736) ? ui.box(max(24,gxe),58,736-max(24,gxe),68);
+  gxm = min(gxe, gxs+712*sv[30]*0.001*srate/capLen*capZoom);
+  gset(0.3,0.75,1,0.16);
+  (gxm > 24 && gxs < 736) ? ui.box(max(24,gxs),58,min(736,gxm)-max(24,gxs),68);
+  (gxm < gxe-2 && gxm >= 24 && gxm <= 736) ? ( gset(0.3,0.75,1,0.9); ui.box(gxm-0.5,58,1,68); );
+  gset(1,0.78,0.3,1);
+  (gxs >= 24 && gxs <= 736) ? ( ui.box(gxs-1,58,2,68); ui.box(gxs-4,58,8,10); ui.box(gxs-4,116,8,10); );
+  (gxe >= 24 && gxe <= 736) ? ( ui.box(gxe-1,58,2,68); ui.box(gxe-4,58,8,10); ui.box(gxe-4,116,8,10); );
+  (playing && pvw && ppos >= Tn) ? (
+    gplayx = 24+712*((pv_a+ppos-Tn)/capLen-capView)*capZoom;
+    (gplayx >= 24 && gplayx <= 736) ? ( gset(1,1,1,0.9); ui.box(gplayx,58,1.5,68); );
+  );
+) : (
+  gset(0.35,0.42,0.55,1);
+  strcpy(#p,"Press CAPTURE, then play audio - recording starts with the sound");
+  gfx_measurestr(#p,gtw,gth);
+  gfx_x = ui.px(380)-gtw*0.5; gfx_y = ui.py(86); gfx_drawstr(#p);
+);
+
+// ===== reverse reverb panel =====
+ui.panel(16,144,728,84);
+gset(0.5,0.62,0.8,1);
+gfx_x = ui.px(24); gfx_y = ui.py(150); gfx_drawstr("REVERSED AUDIO");
+sprintf(#t,"%s  /  %d BPM",#ln,tmp);
+gfx_measurestr(#t,gtw,gth);
+gfx_x = ui.px(736)-gtw; gfx_y = ui.py(150); gfx_drawstr(#t);
+playable ? (
+  gc = 0;
+  while (gc < 224) (
+    gpk = max(outPk[gc*2],outPk[gc*2+1]);
+    gh = wMax > 0 ? gpk/wMax*26 : 0; gh = max(gh,0.6);
+    gtt = (gc+0.5)/224;
+    (playing && min(ppos,Tn1)/Tn1 > gtt) ? gset(0.6,0.9,1,1) : gset(0.3,0.65,0.92,0.85);
+    ui.box(24+gc*gcw,194-gh,gcw*0.7,gh*2);
+    gc += 1;
+  );
+  playing ? ( gset(1,1,1,0.9); ui.box(24+712*min(ppos,Tn1)/Tn1,166,1.5,56); );
+  st == 4 ? ( gset(0.3,0.75,1,0.9); ui.box(24,224,712*(cs+bj/Tn)/nc,2); );
+) : st == 3 ? (
+  gset(0.15,0.2,0.32,1); ui.box(24,191,712,6);
+  gset(0.3,0.75,1,1); ui.box(24,191,712*rj/Tw,6);
+) : (
+  gset(0.35,0.42,0.55,1);
+  strcpy(#p,"The reversed audio will appear here");
+  gfx_measurestr(#p,gtw,gth);
+  gfx_x = ui.px(380)-gtw*0.5; gfx_y = ui.py(180); gfx_drawstr(#p);
+);
+
+// ===== buttons =====
+gfx_setfont(1);
+ui.btn(16,236,80,26,playing);
+gset(0.85,0.93,1,1);
+playing ? ui.box(27,244,10,10) : ui.tri(27,243,27,255,37,249);
+gfx_x = ui.px(46); gfx_y = ui.py(243); gfx_drawstr(playing ? "STOP" : "PLAY");
+
+ui.btn(102,236,80,26,sv[28]);
+gset(sv[28] ? 0.6 : 0.25, sv[28] ? 0.9 : 0.3, sv[28] ? 1 : 0.4, 1); ui.dot(116,249,3.5,1);
+gset(0.85,0.93,1,1);
+gfx_x = ui.px(128); gfx_y = ui.py(243); gfx_drawstr("LOOP");
+
+ui.btn(188,236,104,26,st == 1 || arm);
+st == 1 ? ( gset(0.6,0.1,0.15,0.4); ui.box(189,237,102,24); );
+gset(1,0.3,0.35,1); ui.dot(201,249,5,1);
+gset(0.85,0.93,1,1);
+gfx_x = ui.px(213); gfx_y = ui.py(243); gfx_drawstr(st == 1 ? "STOP REC" : arm ? "CANCEL" : "CAPTURE");
+
+gfx_setfont(2); gset(0.5,0.62,0.8,1);
+strcpy(#t,"REVERB TYPE");
+gfx_measurestr(#t,gtw,gth);
+gfx_x = ui.px(546)-gtw; gfx_y = ui.py(244); gfx_drawstr(#t);
+ui.btn(556,236,188,26,0);
+gset(0.45,0.8,1,1);
+ui.tri(572,249,579,244,579,254);
+ui.tri(728,249,721,244,721,254);
+gfx_setfont(1); gset(0.9,0.95,1,1);
+gfx_measurestr(#tn,gtw,gth);
+gfx_x = ui.px(650)-gtw*0.5; gfx_y = ui.py(243); gfx_drawstr(#tn);
+
+// ===== row of panels =====
+ui.panel(16,270,140,134);
+ui.panel(162,270,196,134);
+ui.panel(364,270,206,134);
+ui.panel(576,270,168,134);
+gfx_setfont(2); gset(0.45,0.55,0.72,1);
+gfx_x = ui.px(28);  gfx_y = ui.py(276); gfx_drawstr("LENGTH");
+gfx_x = ui.px(174); gfx_y = ui.py(276); gfx_drawstr("TONE");
+gfx_x = ui.px(376); gfx_y = ui.py(276); gfx_drawstr("FILTER");
+
+gset(0.14,0.18,0.28,1);
+ui.box(26,289,120,1); ui.box(172,289,176,1); ui.box(374,289,186,1); ui.box(586,289,148,1);
+
+// length value + sync/time
+gset(0.04,0.06,0.11,1); ui.box(31,352,110,18);
+gset(0.16,0.22,0.35,1); ui.box(31,352,110,1); ui.box(31,369,110,1);
+gfx_setfont(1); gset(0.4,0.82,1,1);
+gfx_measurestr(#ln,gtw,gth);
+gfx_x = ui.px(86)-gtw*0.5; gfx_y = ui.py(355); gfx_drawstr(#ln);
+gfx_setfont(2);
+ui.btn(31,376,52,18,sv[3] == 1);
+ui.btn(89,376,52,18,sv[3] == 0);
+gset(0.85,0.93,1,1);
+strcpy(#t,"SYNC"); gfx_measurestr(#t,gtw,gth); gfx_x = ui.px(57)-gtw*0.5; gfx_y = ui.py(380); gfx_drawstr(#t);
+strcpy(#t,"TIME"); gfx_measurestr(#t,gtw,gth); gfx_x = ui.px(115)-gtw*0.5; gfx_y = ui.py(380); gfx_drawstr(#t);
+
+// filter graph
+gset(0.17,0.21,0.32,1); ui.box(375,293,184,92);
+gset(0.04,0.06,0.11,1); ui.box(376,294,182,90);
+gset(0.12,0.16,0.26,1);
+ui.box(376+182*log(100/20)/6.9078,294,1,90);
+ui.box(376+182*log(1000/20)/6.9078,294,1,90);
+ui.box(376+182*log(10000/20)/6.9078,294,1,90);
+ui.box(376,320,182,1);
+gfx_setfont(4); gset(0.3,0.38,0.55,1);
+gfx_x = ui.px(376+182*log(100/20)/6.9078+3); gfx_y = ui.py(372); gfx_drawstr("100");
+gfx_x = ui.px(376+182*log(1000/20)/6.9078+3); gfx_y = ui.py(372); gfx_drawstr("1k");
+gfx_x = ui.px(376+182*log(10000/20)/6.9078+3); gfx_y = ui.py(372); gfx_drawstr("10k");
+ghp = sv[8] > 25; glp = sv[9] < 19500;
+gbl = abs(sv[42]) > 0.05;
+gbl ? (
+  gbell.bq_pk(sv[41],srate,sv[42],sv[43]);
+  gbb0 = gbell.b0; gbb1 = gbell.b1; gbb2 = gbell.b2; gba1 = gbell.a1; gba2 = gbell.a2;
+);
+gx = 0; gprev = 320;
+while (gx <= 180) (
+  gf = 20*1000^(gx/182);
+  gmg = 1;
+  ghp ? ( gmg *= 1/sqrt(1+(sv[8]/gf)^4); );
+  glp ? ( gmg *= 1/sqrt(1+(gf/sv[9])^4); );
+  gbl ? (
+    // exact biquad magnitude, evaluated as real + imaginary parts (no clamping: at low
+    // frequencies both sums are extremely small, so any epsilon would flatten the curve)
+    gw1 = 2*$pi*gf/srate;
+    gcs = cos(gw1); gsn = sin(gw1); gcs2 = cos(2*gw1); gsn2 = sin(2*gw1);
+    gnre = gbb0+gbb1*gcs+gbb2*gcs2; gnim = gbb1*gsn+gbb2*gsn2;
+    gdre = 1+gba1*gcs+gba2*gcs2;    gdim = gba1*gsn+gba2*gsn2;
+    gmg *= sqrt((gnre*gnre+gnim*gnim)/max(gdre*gdre+gdim*gdim,0.000000000000000000000000000001));
+  );
+  gdb = log(gmg)*8.6859;
+  gyy = max(294,min(383,320-gdb*1.667));
+  // fill column: snap edges to whole pixels so neighbours touch exactly (no overlap stripes at fractional scale)
+  gfx0 = floor(ui.px(376+gx)); gfx1 = floor(ui.px(376+gx+2));
+  gfy0 = floor(ui.py(gyy));    gfy1 = floor(ui.py(384));
+  gset(0.3,0.7,1,0.16); gfx_rect(gfx0,gfy0,gfx1-gfx0,gfy1-gfy0);
+  gx > 0 ? ( gset(0.4,0.82,1,1); ui.ln(376+gx-2,gprev,376+gx,gyy); );
+  gprev = gyy;
+  gx += 2;
+);
+gset(0.05,0.07,0.13,1); ui.dot(gHPx,320,5,1); ui.dot(gLPx,320,5,1);
+gset(ghp ? 0.4 : 0.3, ghp ? 0.85 : 0.38, ghp ? 1 : 0.5, 1); ui.dot(gHPx,320,5,0); ui.dot(gHPx,320,4,0);
+gset(glp ? 0.4 : 0.3, glp ? 0.85 : 0.38, glp ? 1 : 0.5, 1); ui.dot(gLPx,320,5,0); ui.dot(gLPx,320,4,0);
+gset(0.05,0.07,0.13,1); ui.dot(gBx,gBy,5,1);
+gset(1,0.78,0.3,(gbl || drag == 23) ? 1 : 0.55); ui.dot(gBx,gBy,5,0); ui.dot(gBx,gBy,4,0);
+gfx_setfont(2); gset(0.6,0.72,0.9,1);
+ghp ? sprintf(#t,"HP %d Hz",sv[8]) : strcpy(#t,"HP Off");
+gfx_x = ui.px(376); gfx_y = ui.py(389); gfx_drawstr(#t);
+glp ? sprintf(#t,"LP %d Hz",sv[9]) : strcpy(#t,"LP Off");
+gfx_measurestr(#t,gtw,gth);
+gfx_x = ui.px(558)-gtw; gfx_y = ui.py(389); gfx_drawstr(#t);
+
+// SENDER panel: centered send button + top-right Lua status
+gset(0.45,0.55,0.72,1); gfx_setfont(2);
+gfx_x = ui.px(588); gfx_y = ui.py(276); gfx_drawstr("SENDER");
+
+gnow = time_precise();
+exp_busy ? (
+  gshow_st = 1; strcpy(#st_lua,"SENDING..."); done_t = 0;
+) : gmem[0] == 1 ? (
+  gshow_st = 1; strcpy(#st_lua,"WAITING..."); done_t = 0;
+) : sent_ui ? (
+  done_t == 0 ? ( done_t = gnow; );
+  (gnow - done_t <= 5) ? (
+    gshow_st = 1; strcpy(#st_lua,"DONE");
+  ) : (
+    gshow_st = 0; sent_ui = 0; done_t = 0;
+  );
+) : (
+  gshow_st = 0; done_t = 0;
+);
+
+gshow_st ? (
+  gset(0.45,0.85,1,1); gfx_setfont(4);
+  gfx_measurestr(#st_lua,gtw,gth);
+  gfx_x = ui.px(734)-gtw; gfx_y = ui.py(277); gfx_drawstr(#st_lua);
+);
+
+ui.btn(588,325,144,24,0);
+gset(0.85,0.93,1,1); gfx_setfont(2);
+strcpy(#t,"SEND TO TRACK");
+gfx_measurestr(#t,gtw,gth);
+gfx_x = ui.px(660)-gtw*0.5; gfx_y = ui.py(331); gfx_drawstr(#t);
+
+// ===== effect chain panel =====
+ui.panel(16,410,728,156);
+gfx_setfont(2); gset(0.45,0.55,0.72,1);
+gfx_x = ui.px(28); gfx_y = ui.py(416); gfx_drawstr("EFFECT CHAIN");
+
+// page switcher
+ui.btn(114,413,16,14,gpg == 0 ? 0 : 1);
+ui.btn(132,413,16,14,gpg == 2 ? 0 : 1);
+gset(0.85,0.93,1,gpg == 0 ? 0.3 : 1); ui.tri(125,416,125,424,119,420);
+gset(0.85,0.93,1,gpg == 2 ? 0.3 : 1); ui.tri(137,416,137,424,143,420);
+
+gsl = 0;
+while (gsl < 7) (
+  ge = go[gsl]; gx0 = 22+(gsl-gpg)*145; gon = sv[fxs(ge)];
+  (gsl >= gpg && gsl <= gpg+4) ? (
+  gdr = drag == 40+ge;
+  gset(gdr ? 0.4 : 0.17, gdr ? 0.8 : 0.22, gdr ? 1 : 0.34, 1);
+  ui.box(gx0,432,136,126);
+  gset(0.085,0.11,0.19,1);
+  ui.box(gx0+1,433,134,124);
+  gset(gon ? 0.13 : 0.1, gon ? 0.2 : 0.14, gon ? 0.36 : 0.22, 1);
+  ui.box(gx0+1,433,134,21);
+  gset(0.45,0.55,0.75,1);
+  ui.dot(gx0+8,439,1,1); ui.dot(gx0+12,439,1,1);
+  ui.dot(gx0+8,443,1,1); ui.dot(gx0+12,443,1,1);
+  ui.dot(gx0+8,447,1,1); ui.dot(gx0+12,447,1,1);
+  gset(0.04,0.05,0.09,1); ui.box(gx0+18,437,12,12);
+  gset(0.3,0.38,0.55,1);
+  ui.box(gx0+18,437,12,1); ui.box(gx0+18,448,12,1); ui.box(gx0+18,437,1,12); ui.box(gx0+29,437,1,12);
+  gon ? ( gset(0.3,0.8,1,1); ui.box(gx0+21,440,6,6); );
+  ge == 1 ? strcpy(#rl,"PITCH RISER") : ge == 2 ? strcpy(#rl,"SATURATION") : ge == 3 ? strcpy(#rl,"SWEEP") :
+  ge == 4 ? strcpy(#rl,"MODULATION") : ge == 5 ? strcpy(#rl,"TREMOLO") : ge == 6 ? strcpy(#rl,"AUTO PAN") : strcpy(#rl,"BITCRUSHER");
+  gfx_setfont(2);
+  gon ? gset(0.88,0.94,1,1) : gset(0.45,0.52,0.65,1);
+  gfx_x = ui.px(gx0+36); gfx_y = ui.py(439); gfx_drawstr(#rl);
+
+  // mode rows
+  gfx_setfont(4);
+  (ge == 4 || ge == 6) ? (
+    gm = 0;
+    while (gm < 3) (
+      ui.btn(gx0+5+gm*43,530,41,18,floor(sv[ge == 4 ? 21 : 34]+0.5) == gm);
+      ge == 4 ? (
+        gm == 0 ? strcpy(#t,"CHORUS") : gm == 1 ? strcpy(#t,"FLANGER") : strcpy(#t,"PHASER");
+      ) : (
+        gm == 0 ? strcpy(#t,"SINE") : gm == 1 ? strcpy(#t,"TRI") : strcpy(#t,"SQUARE");
+      );
+      gset(0.85,0.93,1,gon ? 1 : 0.5);
+      gfx_measurestr(#t,gtw,gth);
+      gfx_x = ui.px(gx0+5+gm*43+20.5)-gtw*0.5; gfx_y = ui.py(535); gfx_drawstr(#t);
+      gm += 1;
+    );
+  );
+  ge == 5 ? (
+    ui.btn(gx0+5,530,61,18,sv[26] == 0);
+    ui.btn(gx0+70,530,61,18,sv[26] == 1);
+    gset(0.85,0.93,1,gon ? 1 : 0.5);
+    strcpy(#t,"SOFT"); gfx_measurestr(#t,gtw,gth); gfx_x = ui.px(gx0+35.5)-gtw*0.5; gfx_y = ui.py(535); gfx_drawstr(#t);
+    strcpy(#t,"HARD"); gfx_measurestr(#t,gtw,gth); gfx_x = ui.px(gx0+100.5)-gtw*0.5; gfx_y = ui.py(535); gfx_drawstr(#t);
+  );
+  ge == 2 ? (
+    // distortion type selector:  < SOFT >
+    ui.btn(gx0+5,530,126,18,0);
+    gset(0.45,0.8,1,gon ? 1 : 0.5);
+    ui.tri(gx0+11,539,gx0+17,535,gx0+17,543);
+    ui.tri(gx0+125,539,gx0+119,535,gx0+119,543);
+    gl2 = floor(sv[39]+0.5);
+    gl2 == 0 ? strcpy(#t,"SOFT") : gl2 == 1 ? strcpy(#t,"TUBE") : gl2 == 2 ? strcpy(#t,"HARD CLIP") : strcpy(#t,"FUZZ");
+    gset(0.85,0.93,1,gon ? 1 : 0.5);
+    gfx_measurestr(#t,gtw,gth);
+    gfx_x = ui.px(gx0+68)-gtw*0.5; gfx_y = ui.py(535); gfx_drawstr(#t);
+  );
+  );
+  gsl += 1;
+);
+
+// ----- knobs (everything) -----
+gk = 0;
+while (gk < 20) (
+  gcx = kt[gk*8]; gcy = kt[gk*8+1]; gr = kt[gk*8+2]; gn = kc[gk*6+4];
+  gal = 1;
+  gk >= 4 ? ( gal = sv[fxs(gk == 19 ? 3 : gk < 16 ? floor((gk-4)/2)+1 : 7)] ? 1 : 0.45; );
+  gcx > -500 ? (
+  gset(0.1,0.12,0.2,gal); ui.dot(gcx,gcy,gr-3,1);
+  gset(0.2,0.25,0.38,gal); ui.dot(gcx,gcy,gr-3,0);
+  gset(0.16,0.2,0.32,gal);
+  gj = 0; while (gj < 3) ( ui.arc(gcx,gcy,gr-gj*0.8,-2.356,2.356); gj += 1; );
+  gn > 0.002 ? (
+    gset(0.3,0.75,1,gal);
+    gj = 0; while (gj < 3) ( ui.arc(gcx,gcy,gr-gj*0.8,-2.356,-2.356+gn*4.712); gj += 1; );
+  );
+  ga = -2.356+gn*4.712;
+  gset(0.92,0.96,1,gal);
+  ui.dot(gcx+sin(ga)*gr*0.5, gcy-cos(ga)*gr*0.5, 1.8, 1);
+
+  // label
+  gk == 1 ? strcpy(#kl,"SHAPE") : gk == 2 ? strcpy(#kl,"WIDTH") : gk == 3 ? strcpy(#kl,"LEVEL") :
+  gk == 4 ? strcpy(#kl,"PITCH") : gk == 5 ? strcpy(#kl,"CURVE") :
+  gk == 6 ? strcpy(#kl,"DRIVE") : gk == 7 ? strcpy(#kl,"MIX") :
+  gk == 8 ? strcpy(#kl,"DEPTH") : gk == 9 ? strcpy(#kl,"RESO") :
+  gk == 10 ? strcpy(#kl,"AMOUNT") : gk == 11 ? strcpy(#kl,"RATE") :
+  gk == 12 ? strcpy(#kl,"DEPTH") : gk == 13 ? strcpy(#kl,"RATE") :
+  gk == 14 ? strcpy(#kl,"DEPTH") : gk == 15 ? strcpy(#kl,"RATE") :
+  gk == 16 ? strcpy(#kl,"AMOUNT") : gk == 17 ? strcpy(#kl,"BALANCE") : gk == 19 ? strcpy(#kl,"NOISE") : strcpy(#kl,"MIX");
+  // value
+  gvv = sv[kc[gk*6]];
+  (gk == 1 || gk == 2 || (gk >= 5 && gk <= 10) || gk == 12 || gk == 14 || gk >= 16) ? ( sprintf(#kv,"%d",gvv); strcat(#kv,"%"); ) :
+  gk == 3 ? sprintf(#kv,"%.1f dB",gvv) :
+  gk == 4 ? sprintf(#kv,"-%.1f st",gvv) :
+  gk == 11 ? sprintf(#kv,"%.2f Hz",gvv) :
+  gk == 13 ? sprintf(#kv,"%.1f Hz",gvv) :
+  gk == 15 ? sprintf(#kv,"%.2f Hz",gvv) : strcpy(#kv,"");
+  gfx_setfont(2);
+  gk > 0 ? (
+    gfx_setfont((gk >= 16 || gk == 8 || gk == 9) ? 4 : 2);   // smaller labels on the 3-knob Bitcrusher card
+    gset(0.5,0.62,0.8,gal);
+    gfx_measurestr(#kl,gtw,gth);
+    gfx_x = ui.px(gcx)-gtw*0.5; gfx_y = ui.py(gcy-gr-13); gfx_drawstr(#kl);
+    gfx_setfont(2);
+    gset(0.78,0.88,1,gal);
+    gfx_measurestr(#kv,gtw,gth);
+    gfx_x = ui.px(gcx)-gtw*0.5; gfx_y = ui.py(gcy+gr+4); gfx_drawstr(#kv);
+  );
+  );
+  gk += 1;
+);
+
+// ===== hint line =====
+strcpy(#hint2,"");
+ghov == 0 ? strcpy(#hint,"LENGTH: total duration of the reverse reverb (tempo-synced or in milliseconds).") :
+ghov == 1 ? strcpy(#hint,"SHAPE: how the swell builds - lower = earlier, higher = later and sharper.") :
+ghov == 2 ? strcpy(#hint,"WIDTH: stereo width of the result (100% = original).") :
+ghov == 3 ? strcpy(#hint,"LEVEL: output gain of the reverse reverb in dB.") :
+ghov == 4 ? strcpy(#hint,"PITCH RISER PITCH: The starting pitch in semitones below the original pitch.") :
+ghov == 5 ? strcpy(#hint,"PITCH RISER CURVE: How the pitch climbs. Lower values climb steadily. Higher values stay low and save the climb for the very end.") :
+ghov == 6 ? strcpy(#hint,"SATURATION DRIVE: how hard the signal is pushed into the selected distortion type.") :
+ghov == 7 ? strcpy(#hint,"SATURATION MIX: blend between the clean and the saturated sound.") :
+ghov == 8 ? strcpy(#hint,"SWEEP DEPTH: how far below fully open the low-pass filter starts before it opens up.") :
+ghov == 9 ? strcpy(#hint,"SWEEP RESONANCE: emphasis of the sweeping filter.") :
+ghov == 10 ? strcpy(#hint,"MODULATION AMOUNT: depth of the chorus / flanger / phaser movement.") :
+ghov == 11 ? strcpy(#hint,"MODULATION RATE: speed of the modulation in Hz.") :
+ghov == 12 ? strcpy(#hint,"TREMOLO DEPTH: how much the volume is reduced on each pulse.") :
+ghov == 13 ? strcpy(#hint,"TREMOLO RATE: speed of the pulses in Hz.") :
+ghov == 14 ? strcpy(#hint,"AUTO PAN DEPTH: how far the sound travels towards the left and right (100% = full left to full right).") :
+ghov == 15 ? strcpy(#hint,"AUTO PAN RATE: speed of the left / right movement in Hz.") :
+ghov == 16 ? strcpy(#hint,"BITCRUSHER AMOUNT: total sample-rate and bit-depth reduction. The balance knob decides how it is shared between the two.") :
+ghov == 17 ? strcpy(#hint,"BITCRUSHER BALANCE: 0% = bit depth reduction only, 50% = both equally, 100% = sample-rate reduction only.") :
+ghov == 18 ? strcpy(#hint,"BITCRUSHER MIX: blend between the clean and the crushed sound.") :
+ghov == 19 ? strcpy(#hint,"SWEEP NOISE: white noise that follows the loudness of the reversed audio - quiet at the start, loud at the end. The sweep filter shapes it too.") :
+ghov == 106 ? (
+  strcpy(#hint,"FILTER: drag the HP / LP points. Drag the amber BELL point: left / right = frequency, up / down = gain.");
+  strcpy(#hint2,"Mouse wheel over the graph = bell Q.  Ctrl+click on a point = reset it (HP / LP / bell).");
+) :
+ghov == 105 ? strcpy(#hint,"SATURATION TYPE: SOFT = smooth clipper, TUBE = warm asymmetric, HARD CLIP = flat-top clipping, FUZZ = heavy asymmetric fuzz.") :
+ghov == 104 ? strcpy(#hint,"AUTO PAN SHAPE: SINE = smooth sweep, TRI = linear sweep, SQUARE = quick jumps between left and right.") :
+ghov == 100 ? strcpy(#hint,"TREMOLO SOFT / HARD: SOFT gives smooth pulses. HARD chops the sound fully on and off, like a gate.") :
+ghov == 101 ? strcpy(#hint,"MODULATION MODE: CHORUS = lush doubling, FLANGER = jet sweep, PHASER = swirling notches.") :
+ghov == 102 ? (
+  strcpy(#hint,"CAPTURED AUDIO: Wheel = zoom, Shift+wheel = horizontal scroll, Ctrl+click = FIT. Drag markers to set the range.");
+  strcpy(#hint2,"Drag between the markers to move the selection. Ctrl+click anywhere on the waveform to show the full capture.");
+) :
+ghov == 107 ? strcpy(#hint,"HINTS: click the ? button to hide or show this help text.") :
+ghov == 108 ? strcpy(#hint,"Final result, after FX chain - click to preview with the original") :
+ghov == 109 ? strcpy(#hint,"SEND TO TRACK: needs the Lua receiver script") :
+ghov == 110 ? strcpy(#hint,"ABOUT: click to show information about Backwash.") :
+ghov == 103 ? strcpy(#hint,"AUDIO SOURCE: how much audio, counted from the start marker, is fed into the reverb (default 250 ms). Drag up / down.") :
+strcpy(#hint,"Ctrl+click = reset   |   Shift+drag = fine   |   MIDI note = trigger   |   SEND TO TRACK needs the Lua script   |   Mouse wheel = effect chain page");
+gfx_setfont(2); gset(0.5,0.62,0.8,1);
+slider44 == 0 ? (
+  gfx_x = ui.px(16); gfx_y = ui.py(570); gfx_drawstr(#hint);
+  gfx_x = ui.px(16); gfx_y = ui.py(581); gfx_drawstr(#hint2);
+);
+// hints on / off button (small, bottom right)
+gHelpHover = mx >= 720 && mx <= 744 && my >= 568 && my <= 592;
+gHelpHover ? gset(0.16,0.24,0.34,1) : gset(0.09,0.14,0.22,1);
+ui.ln(720,568,744,568); ui.ln(744,568,744,592);
+ui.ln(744,592,720,592); ui.ln(720,592,720,568);
+gset(0.85,0.93,1,slider44 == 0 ? 1 : 0.5); gfx_setfont(5);
+strcpy(#t,"?"); gfx_measurestr(#t,gtw,gth);
+gfx_x = ui.px(732)-gtw*0.5; gfx_y = ui.py(568)+(24*ui.S-gth)*0.5; gfx_drawstr(#t);
+
+// ===== About window (click "by vislov") =====
+about_on ? (
+  gset(0.02,0.01,0.05,0.4); gfx_rect(0,0,gfx_w,gfx_h);        // dim the whole interface a little
+  gset(0.04,0.02,0.09,0.92); ui.box(16,34,728,160);           // semi-transparent panel
+  gset(0.42,0.5,1,0.9);                                       // border
+  ui.box(16,34,728,1); ui.box(16,193,728,1); ui.box(16,34,1,160); ui.box(743,34,1,160);
+  gset(0.9,0.95,1,1); gfx_setfont(3);
+  gfx_x = ui.px(32); gfx_y = ui.py(46); gfx_drawstr("BACKWASH");
+  gfx_setfont(1); gset(0.82,0.88,1,1);
+  gfx_x = ui.px(32); gfx_y = ui.py(76); gfx_drawstr("Created by Ruslan Vislov");
+  gfx_x = ui.px(32); gfx_y = ui.py(94); gfx_drawstr("Website: vislovprod.com");
+  gset(0.7,0.78,0.95,1);
+  gfx_x = ui.px(32); gfx_y = ui.py(124); gfx_drawstr("A free creative audio effect for REAPER that goes beyond traditional reverse reverb.");
+  gfx_x = ui.px(32); gfx_y = ui.py(150); gfx_drawstr("Combines reverse reverb processing with additional sound-shaping effects to create unique");
+  gfx_x = ui.px(32); gfx_y = ui.py(167); gfx_drawstr("textures, transitions, vocal effects and experimental sounds.");
+);
