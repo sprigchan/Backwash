@@ -1,4 +1,14 @@
 desc:Backwash (vislov)
+version: 1.0
+author: Ruslan Vislov
+link: Website https://vislovprod.com
+about:
+  # Backwash
+  Reverse reverb and creative effects for REAPER: capture audio, render a
+  reversed reverb tail and shape it with risers, saturation, sweeps,
+  modulation, tremolo, auto-pan and bitcrusher.
+changelog:
+  Initial release
 tags:reverb reverse creative riser swell transition fx
 options:maxmem=24000000
 options:gmem=ReverseReverbSend
