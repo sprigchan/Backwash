@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<index version="1" commit="bce7ba62ddaa4371ba04e5ad543571ee3b02269b">
+  <category name="Effects/vislov">
+    <reapack name="Backwash.jsfx" type="effect" desc="Backwash (vislov)">
+      <metadata>
+        <description><![CDATA[{\rtf1\ansi\deff0{\fonttbl{\f0 \fswiss Helvetica;}{\f1 \fmodern Courier;}}
+{\colortbl;\red255\green0\blue0;\red0\green0\blue255;}
+\widowctrl\hyphauto
+
+{\pard \ql \f0 \sa180 \li0 \fi0 \outlinelevel0 \b \fs36 Backwash\par}
+{\pard \ql \f0 \sa180 \li0 \fi0 Reverse reverb and creative effects for REAPER: capture audio, render a reversed reverb tail and shape it with risers, saturation, sweeps, modulation, tremolo, auto-pan and bitcrusher.\par}
+}
+]]></description>
+        <link rel="website" href="https://vislovprod.com">Website</link>
+      </metadata>
+      <version name="1.0" author="Ruslan Vislov" time="2026-11-24T22:21:32Z">
+        <changelog><![CDATA[Initial release]]></changelog>
+        <source>https://github.com/sprigchan/Backwash/raw/bce7ba62ddaa4371ba04e5ad543571ee3b02269b/Effects/vislov/Backwash.jsfx</source>
+      </version>
+    </reapack>
+  </category>
+  <category name="Scripts/vislov">
+    <reapack name="Backwash_Receiver.lua" type="script" desc="Backwash Receiver (SEND TO TRACK)">
+      <metadata>
+        <description><![CDATA[{\rtf1\ansi\deff0{\fonttbl{\f0 \fswiss Helvetica;}{\f1 \fmodern Courier;}}
+{\colortbl;\red255\green0\blue0;\red0\green0\blue255;}
+\widowctrl\hyphauto
+
+{\pard \ql \f0 \sa180 \li0 \fi0 \outlinelevel0 \b \fs36 Backwash Receiver\par}
+{\pard \ql \f0 \sa180 \li0 \fi0 Background script for the SEND TO TRACK button of the Backwash JSFX plugin. It saves the rendered result as a WAV file in the project folder and places it on the selected track. Run it once; it can also start with REAPER.\par}
+}
+]]></description>
+        <link rel="website" href="https://vislovprod.com">Website</link>
+      </metadata>
+      <version name="1.0" author="Ruslan Vislov" time="2026-11-24T22:14:14Z">
+        <changelog><![CDATA[Initial release]]></changelog>
+        <source main="main">https://github.com/sprigchan/Backwash/raw/f7813a3284cf2f90410a7e47a038a2f2e18b4e34/Scripts/vislov/Backwash_Receiver.lua</source>
+      </version>
+    </reapack>
+  </category>
+  <metadata>
+    <link rel="website" href="https://github.com/sprigchan/Backwash">website</link>
+    <link rel="website" href="https://vislovprod.com">donation</link>
+  </metadata>
+</index>
