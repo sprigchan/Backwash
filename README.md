@@ -23,7 +23,7 @@ other reverse-reverb tricks.
 2. Paste this URL:
 
    ```
-   https://github.com/YOUR_GITHUB_USER/Backwash/raw/master/index.xml
+   https://github.com/sprigchan/Backwash/raw/master/index.xml
    ```
 
 3. Open **Extensions > ReaPack > Browse packages**, find **Backwash** and install it.
@@ -41,10 +41,20 @@ writes a WAV into the project folder and places it on the selected track
 
 ## Manual installation
 
-Copy `Effects/vislov/Backwash.jsfx` into the `Effects/vislov` folder of your
-REAPER resource path (**Options > Show REAPER resource path in explorer**),
-then restart REAPER or rescan FX. For SEND TO TRACK, load
-`Scripts/vislov/Backwash_Receiver.lua` via **Actions > Show action list > New action > Load ReaScript**.
+Open your REAPER resource path (**Options > Show REAPER resource path in explorer**)
+and copy two files from this repository:
+
+1. `Backwash/Backwash.jsfx` into `Effects/vislov/Backwash/`
+   (create the folders if they do not exist).
+2. `Backwash/Backwash_Receiver.lua` into `Scripts/vislov/Backwash/`
+   (needed only for the SEND TO TRACK button).
+
+Then:
+
+1. Restart REAPER or rescan FX, and add the plugin via **FX > JS: Backwash (vislov)**.
+2. Open **Actions > Show action list > New action > Load ReaScript...**, select
+   `Scripts/vislov/Backwash/Backwash_Receiver.lua` and run it once. On first launch
+   it offers to start automatically with REAPER.
 
 ## License
 
