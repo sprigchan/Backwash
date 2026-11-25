@@ -894,7 +894,7 @@ sv[21]=slider21; sv[22]=slider22; sv[23]=slider23; sv[24]=slider24; sv[25]=slide
 sv[26]=slider26; sv[28]=slider28; sv[29]=slider29; sv[30]=slider30;
 sv[31]=slider31; sv[32]=slider32; sv[33]=slider33; sv[34]=slider34;
 sv[35]=slider35; sv[36]=slider36; sv[37]=slider37; sv[38]=slider38; sv[39]=slider39;
-sv[40]=slider40; sv[41]=slider41; sv[42]=slider42; sv[43]=slider43;
+sv[40]=slider40; sv[41]=slider41; sv[42]=slider42; sv[43]=slider43; sv[45]=slider45;
 
 // Initialize history with the factory/current state.
 !histReady ? (
@@ -940,6 +940,7 @@ sv[40]=slider40; sv[41]=slider41; sv[42]=slider42; sv[43]=slider43;
   histBase[41] = sv[41];
   histBase[42] = sv[42];
   histBase[43] = sv[43];
+  histBase[45] = sv[45];
   histReady = 1;
 );
 
@@ -1056,6 +1057,7 @@ click ? (
   histBase[histSlots*histStride+41] = sv[41];
   histBase[histSlots*histStride+42] = sv[42];
   histBase[histSlots*histStride+43] = sv[43];
+  histBase[histSlots*histStride+45] = sv[45];
   drag = 0;
   // Undo / redo buttons under the status label.
   (mx >= 664 && mx <= 688 && my >= 568 && my <= 592) ? (gUndoReq = 1; histPending = 0;);
@@ -1275,6 +1277,7 @@ gResetReq ? (
   slider41 = 1000;
   slider42 = 0;
   slider43 = 1;
+  slider45 = 0;
   sliderchange(1073741823); slider_automate(1073741823);
   sliderchange(slider31); slider_automate(slider31);
   sliderchange(slider32); slider_automate(slider32);
@@ -1289,6 +1292,7 @@ gResetReq ? (
   sliderchange(slider41); slider_automate(slider41);
   sliderchange(slider42); slider_automate(slider42);
   sliderchange(slider43); slider_automate(slider43);
+  sliderchange(slider45); slider_automate(slider45);
 
   // Reset the captured audio as if the plug-in had just been loaded.
   playing = 0; playable = 0; pvw = 0; ppos = 0;
@@ -1318,6 +1322,7 @@ gResetReq ? (
   histBase[35] = slider35; histBase[36] = slider36; histBase[37] = slider37;
   histBase[38] = slider38; histBase[39] = slider39; histBase[40] = slider40;
   histBase[41] = slider41; histBase[42] = slider42; histBase[43] = slider43;
+  histBase[45] = slider45;
   gResetReq = 0;
 );
 gUndoReq ? (
@@ -1365,6 +1370,7 @@ gUndoReq ? (
     slider41 = histBase[gRestoreSlot*histStride+41];
     slider42 = histBase[gRestoreSlot*histStride+42];
     slider43 = histBase[gRestoreSlot*histStride+43];
+    slider45 = histBase[gRestoreSlot*histStride+45];
     sliderchange(1073741823); slider_automate(1073741823);
     sliderchange(slider31); slider_automate(slider31);
     sliderchange(slider32); slider_automate(slider32);
@@ -1379,6 +1385,7 @@ gUndoReq ? (
     sliderchange(slider41); slider_automate(slider41);
     sliderchange(slider42); slider_automate(slider42);
     sliderchange(slider43); slider_automate(slider43);
+    sliderchange(slider45); slider_automate(slider45);
   );
   gUndoReq = 0;
 );
@@ -1427,6 +1434,7 @@ gRedoReq ? (
     slider41 = histBase[gRestoreSlot*histStride+41];
     slider42 = histBase[gRestoreSlot*histStride+42];
     slider43 = histBase[gRestoreSlot*histStride+43];
+    slider45 = histBase[gRestoreSlot*histStride+45];
     sliderchange(1073741823); slider_automate(1073741823);
     sliderchange(slider31); slider_automate(slider31);
     sliderchange(slider32); slider_automate(slider32);
@@ -1441,6 +1449,7 @@ gRedoReq ? (
     sliderchange(slider41); slider_automate(slider41);
     sliderchange(slider42); slider_automate(slider42);
     sliderchange(slider43); slider_automate(slider43);
+    sliderchange(slider45); slider_automate(slider45);
   );
   gRedoReq = 0;
 );
@@ -1491,6 +1500,7 @@ gRedoReq ? (
     sv[41] = slider41;
     sv[42] = slider42;
     sv[43] = slider43;
+    sv[45] = slider45;
     gChanged = 0;
     (abs(sv[1]-(histBase[histSlots*histStride+1])) > 0.000001) ? gChanged = 1;
     (abs(sv[2]-(histBase[histSlots*histStride+2])) > 0.000001) ? gChanged = 1;
@@ -1534,6 +1544,7 @@ gRedoReq ? (
     (abs(sv[41]-(histBase[histSlots*histStride+41])) > 0.000001) ? gChanged = 1;
     (abs(sv[42]-(histBase[histSlots*histStride+42])) > 0.000001) ? gChanged = 1;
     (abs(sv[43]-(histBase[histSlots*histStride+43])) > 0.000001) ? gChanged = 1;
+    (abs(sv[45]-(histBase[histSlots*histStride+45])) > 0.000001) ? gChanged = 1;
     gChanged ? (
       histCursor = min(histSlots-1,histCursor+1);
       histCount = histCursor;
@@ -1579,6 +1590,7 @@ gRedoReq ? (
       histBase[histCursor*histStride+41] = sv[41];
       histBase[histCursor*histStride+42] = sv[42];
       histBase[histCursor*histStride+43] = sv[43];
+      histBase[histCursor*histStride+45] = sv[45];
     );
     histPending = 0;
   );
