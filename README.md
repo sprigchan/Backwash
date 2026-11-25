@@ -5,7 +5,8 @@ Reverse reverb and creative effects for REAPER (JSFX).
 Backwash captures incoming audio, renders a reversed reverb tail and lets you
 shape it with a chain of effects. Useful for swells, risers, transitions and
 other reverse-reverb tricks.
-<img width="1576" height="1273" alt="Backwash" src="https://github.com/user-attachments/assets/b19aa879-01d5-4fc3-8941-11a7cf49a03a" />
+<img width="1642" height="1303" alt="Backwash" src="https://github.com/user-attachments/assets/661b5107-dd31-4187-8636-541c95d556f5" />
+
 
 ## Features
 
