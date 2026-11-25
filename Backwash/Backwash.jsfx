@@ -34,7 +34,7 @@ slider1:3<0,5,1{1/16 bar,1/8 bar,1/4 bar,1/2 bar,1 bar,2 bars}>-Length (Sync)
 slider2:1000<50,6000,1>-Length (ms)
 slider3:1<0,1,1{Time,Sync}>-Length Mode
 slider4:0<0,4,1{Plate,Hall,Room,Chamber,Cathedral}>-Reverb Type
-slider5:50<0,100,1>-Shape (%)
+slider5:0<0,100,1>-Fade In (%)
 slider6:100<0,200,1>-Width (%)
 slider7:0<-24,12,0.1>-Level (dB)
 slider8:20<20,2000,1>-High-pass (Hz)
@@ -73,6 +73,7 @@ slider41:1000<20,20000,1>-Filter Bell Frequency (Hz)
 slider42:0<-30,15,0.1>-Filter Bell Gain (dB)
 slider43:1<0.1,10,0.01>-Filter Bell Q
 slider44:0<0,1,1{Show,Hide}>-Hide Hints
+slider45:0<0,1,1{Off,On}>-MIDI Trigger
 
 in_pin:Left In
 in_pin:Right In
@@ -125,7 +126,7 @@ tpar[12]=1.9; tpar[13]=1.3; tpar[14]=0.4;  // Cathedral
 
 // ---------- knob table: cx, cy, r, slider, min, max, default, log ----------
 kt[0]=86; kt[1]=322; kt[2]=24; kt[3]=2; kt[4]=50; kt[5]=6000; kt[6]=1000; kt[7]=1;
-kt[8]=205; kt[9]=332; kt[10]=19; kt[11]=5; kt[12]=0; kt[13]=100; kt[14]=50; kt[15]=0;
+kt[8]=205; kt[9]=332; kt[10]=19; kt[11]=5; kt[12]=0; kt[13]=100; kt[14]=0; kt[15]=0;
 kt[16]=262; kt[17]=332; kt[18]=19; kt[19]=6; kt[20]=0; kt[21]=200; kt[22]=100; kt[23]=0;
 kt[24]=319; kt[25]=332; kt[26]=19; kt[27]=7; kt[28]=-24; kt[29]=12; kt[30]=0; kt[31]=0;
 // effect knobs (positions are set every frame): knobs 4-15 = two per card (effects 1-6), knobs 16-18 = Bitcrusher
@@ -533,7 +534,7 @@ st == 4 ? (
       bcph = bchold-1; bchl = 0; bchr = 0;
     );
     sc == 8 ? (
-      she = 2^((sb[5]*0.02-1)*1.5);
+      she = 2^(sb[5]*0.01*3);
       twid = sb[6]*0.01; tlvl = 10^(sb[7]/20);   // Level knob (dB)
       thp = sb[8] > 25; tlp = sb[9] < 19500; tbell = abs(sb[42]) > 0.05;
       hpL.bq_hp(sb[8],srate); hpR.bq_hp(sb[8],srate);
@@ -775,7 +776,7 @@ st == 4 ? (
 
 // ---------- MIDI trigger + pass-through ----------
 while (midirecv(mo,m1,m2,m3)) (
-  ((m1 & $xF0) == $x90 && m3 > 0) ? ( cmd_trig = 1; );
+  (slider45 && (m1 & $xF0) == $x90 && m3 > 0) ? ( cmd_trig = 1; );
   midisend(mo,m1,m2,m3);
 );
 cmd_play ? (
@@ -1103,6 +1104,7 @@ click ? (
   (click && mx >= 14 && mx <= 66 && my >= 16 && my <= 32) ? ( about_on = 1; );   // click on "by vislov" = About
   (click && mx >= 720 && mx <= 744 && my >= 568 && my <= 592) ? ( slider44 = 1-slider44; sliderchange(slider44); slider_automate(slider44); );   // show / hide hints
   (click && mx >= 102 && mx <= 182 && my >= 236 && my <= 262) ? ( setidx = 28; newv = 1-sv[28]; );
+  (click && mx >= 298 && mx <= 378 && my >= 236 && my <= 262) ? ( slider45 = 1-slider45; sliderchange(slider45); slider_automate(slider45); );   // MIDI trigger on / off
   (click && mx >= 188 && mx <= 292 && my >= 236 && my <= 262) ? ( cmd_cap = 1; );
   (click && mx >= 556 && mx <= 744 && my >= 236 && my <= 262) ? (
     setidx = 4; newv = mx < 650 ? sv[4]-1 : sv[4]+1;
@@ -1235,7 +1237,7 @@ gResetReq ? (
   slider2 = 1000;
   slider3 = 1;
   slider4 = 0;
-  slider5 = 50;
+  slider5 = 0;
   slider6 = 100;
   slider7 = 0;
   slider8 = 20;
@@ -1620,6 +1622,7 @@ ghov = -1;
 (mx >= 16 && mx <= 744 && my >= 144 && my <= 228) ? ( ghov = 108; );
 (mx >= 576 && mx <= 744 && my >= 270 && my <= 404) ? ( ghov = 109; );
 (mx >= 14 && mx <= 66 && my >= 16 && my <= 32) ? ( ghov = 110; );
+(mx >= 298 && mx <= 378 && my >= 236 && my <= 262) ? ( ghov = 111; );
 gk = 0;
 while (gk < 20) (
   gddx = mx-kt[gk*8]; gddy = my-kt[gk*8+1]; grr = kt[gk*8+2]+5;
@@ -1813,6 +1816,11 @@ st == 1 ? ( gset(0.6,0.1,0.15,0.4); ui.box(189,237,102,24); );
 gset(1,0.3,0.35,1); ui.dot(201,249,5,1);
 gset(0.85,0.93,1,1);
 gfx_x = ui.px(213); gfx_y = ui.py(243); gfx_drawstr(st == 1 ? "STOP REC" : arm ? "CANCEL" : "CAPTURE");
+
+ui.btn(298,236,80,26,slider45);
+gset(slider45 ? 0.6 : 0.25, slider45 ? 0.9 : 0.3, slider45 ? 1 : 0.4, 1); ui.dot(312,249,3.5,1);
+gset(0.85,0.93,1,1);
+gfx_x = ui.px(324); gfx_y = ui.py(243); gfx_drawstr("MIDI");
 
 gfx_setfont(2); gset(0.5,0.62,0.8,1);
 strcpy(#t,"REVERB TYPE");
@@ -2035,7 +2043,7 @@ while (gk < 20) (
   ui.dot(gcx+sin(ga)*gr*0.5, gcy-cos(ga)*gr*0.5, 1.8, 1);
 
   // label
-  gk == 1 ? strcpy(#kl,"SHAPE") : gk == 2 ? strcpy(#kl,"WIDTH") : gk == 3 ? strcpy(#kl,"LEVEL") :
+  gk == 1 ? strcpy(#kl,"FADE IN") : gk == 2 ? strcpy(#kl,"WIDTH") : gk == 3 ? strcpy(#kl,"LEVEL") :
   gk == 4 ? strcpy(#kl,"PITCH") : gk == 5 ? strcpy(#kl,"CURVE") :
   gk == 6 ? strcpy(#kl,"DRIVE") : gk == 7 ? strcpy(#kl,"MIX") :
   gk == 8 ? strcpy(#kl,"DEPTH") : gk == 9 ? strcpy(#kl,"RESO") :
@@ -2069,7 +2077,7 @@ while (gk < 20) (
 // ===== hint line =====
 strcpy(#hint2,"");
 ghov == 0 ? strcpy(#hint,"LENGTH: total duration of the reverse reverb (tempo-synced or in milliseconds).") :
-ghov == 1 ? strcpy(#hint,"SHAPE: how the swell builds - lower = earlier, higher = later and sharper.") :
+ghov == 1 ? strcpy(#hint,"FADE IN: how the swell builds - 0% = linear, higher = later and sharper.") :
 ghov == 2 ? strcpy(#hint,"WIDTH: stereo width of the result (100% = original).") :
 ghov == 3 ? strcpy(#hint,"LEVEL: output gain of the reverse reverb in dB.") :
 ghov == 4 ? strcpy(#hint,"PITCH RISER PITCH: The starting pitch in semitones below the original pitch.") :
@@ -2104,6 +2112,7 @@ ghov == 107 ? strcpy(#hint,"HINTS: click the ? button to hide or show this help 
 ghov == 108 ? strcpy(#hint,"Final result, after FX chain - click to preview with the original") :
 ghov == 109 ? strcpy(#hint,"SEND TO TRACK: needs the Lua receiver script") :
 ghov == 110 ? strcpy(#hint,"ABOUT: click to show information about Backwash.") :
+ghov == 111 ? strcpy(#hint,"MIDI TRIGGER: when ON, a MIDI note starts the reversed audio. Turn OFF to stop notes from triggering it (e.g. when recording).") :
 ghov == 103 ? strcpy(#hint,"AUDIO SOURCE: how much audio, counted from the start marker, is fed into the reverb (default 250 ms). Drag up / down.") :
 strcpy(#hint,"Ctrl+click = reset   |   Shift+drag = fine   |   MIDI note = trigger   |   SEND TO TRACK needs the Lua script   |   Mouse wheel = effect chain page");
 gfx_setfont(2); gset(0.5,0.62,0.8,1);
